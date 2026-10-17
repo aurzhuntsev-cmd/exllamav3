@@ -503,6 +503,8 @@ class Model_TPMixin:
         verbose: bool,
         tp_options: dict,
     ):
+        start_time = time.perf_counter()
+
         assert use_per_device is None or reserve_per_device is None
         if dev_limits is None: dev_limits = {}
 
@@ -575,8 +577,7 @@ class Model_TPMixin:
             gpu_cache_manager = GpuCacheManager(config)
             if gpu_cache_manager.valid(self.plan):
                 gpu_cache_manager.set_mode(GpuCacheManagerMode.SERVING)
-                for device in self.active_devices:
-                    self.tp_worker_dispatch_wait_multi([device], mp_gpu_cache_set_serve, (self.config,))    
+                self.tp_worker_dispatch_wait_multi(self.active_devices, mp_gpu_cache_set_serve, (self.config,))    
             else:
                 gpu_cache_manager.set_mode(GpuCacheManagerMode.CAPTURING)                
                 self.tp_worker_dispatch_wait_multi(self.active_devices, mp_gpu_cache_set_capture, (self.config,))
@@ -639,7 +640,11 @@ class Model_TPMixin:
 
         config.stc.close()
         self.loaded_tp = True
+        end_time = time.perf_counter()
+        execution_time = end_time - start_time
 
+        print(f"Execution time: {execution_time} seconds")
+        
         if 'yield' in locals():
             yield
 

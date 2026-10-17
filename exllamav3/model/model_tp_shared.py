@@ -270,10 +270,11 @@ class SMConsumer:
             return self.cached_cpu_tensors[cache_id]
 
         if self.gpu_cache_manager != None and cuda and method == "buffer":
-            tensor = self.gpu_cache_manager.get_tensor(imp["key"])
+            cache_key = f"{imp['key']}_{first}_{last}" if slice_dim is not None else imp["key"]
+            tensor = self.gpu_cache_manager.get_tensor(cache_key)
             if tensor is not None: 
-                return tensor        
-
+                return tensor 
+                   
         # Fallback method
         if method == "share_memory":
             tensor = imp["shared_tensor"]        
@@ -306,7 +307,8 @@ class SMConsumer:
             tensor = tensor.clone(memory_format = torch.contiguous_format)
 
         if self.gpu_cache_manager != None and cuda and method == "buffer":
-            self.gpu_cache_manager.capture(self.device, imp["key"], tensor) if self.device >= 0 else None
+            cache_key = f"{imp['key']}_{first}_{last}" if slice_dim is not None else imp["key"]
+            self.gpu_cache_manager.capture(self.device, cache_key, tensor) if self.device >= 0 else None
 
         return tensor
 

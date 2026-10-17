@@ -1579,7 +1579,7 @@ class GatedDeltaNet(Module):
             "num_k_heads": self.num_k_heads,
             "num_v_heads": self.num_v_heads,
             "num_kv_group": self.num_v_heads // self.num_k_heads,
-            **{name: _export(name, getattr(self, name, None)) for name in (
+            **{name: _export(self.get_tensor_key(name), getattr(self, name, None)) for name in (
                 "qkv_proj",
                 "z_proj",
                 "b_proj",

@@ -8,6 +8,7 @@ import json, pickle
 GPU_CACHE_ENV_VAR                   = "EXL3_TP_CACHE_ENABLE"
 GPU_CACHE_BASE_PATH                 = ".tensorsplit/"
 GPU_CACHE_CUDA_ALIGN_SECTOR_SIZE    = 256
+CPU_CACHE_LOAD_CHUNK_SIZE_MB        = 64
 
 class GpuCacheManagerMode(Enum):
     DISABLED = 0
@@ -168,7 +169,7 @@ class GpuCacheManager:
         gpu_buf.copy_(cpu_buf, non_blocking=True)
         """
 
-        chunk = 64 * 1024 * 1024
+        chunk = CPU_CACHE_LOAD_CHUNK_SIZE_MB * 1024 * 1024
         gpu_buf = torch.empty(size, dtype=torch.uint8, device=device)
         cpu_chunk = torch.empty(chunk, dtype=torch.uint8, pin_memory=True)            
         mv = memoryview(cpu_chunk.numpy())        
