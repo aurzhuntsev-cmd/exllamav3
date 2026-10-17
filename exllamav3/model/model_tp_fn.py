@@ -10,6 +10,8 @@ from functools import lru_cache
 from .model_tp_backend import TPBackendNCCL, TPBackendNative, TPBackendNull
 from ..tokenizer.mm_embedding import recv_embeddings
 from ..util import log_tp, set_t0
+from .model_tp_gpu_cache import GpuCacheManager, GpuCacheManagerMode
+from ..model.config import Config
 
 _no_fwd_barrier = os.environ.get("EXL3_TP_NO_FWD_BARRIER", "1") != "0"
 _stream_hash_passes = int(os.environ.get("EXL3_TP_STREAM_HASH", "0") or "0")
@@ -595,6 +597,36 @@ def mp_cpu_cache_fetch(local_context: dict, cache_ids: list[int], slot: int, pag
         tensor[page_index].copy_(buffer, non_blocking = True)
     pool.note_copies(slot)
 
+def mp_gpu_cache_set_capture(local_context: dict, config: Config):
+    """
+    Instantiate GpuCacheManager singleton and set it into capturing mode
+    """    
+    GpuCacheManager(config).set_mode(GpuCacheManagerMode.CAPTURING)
+
+def mp_gpu_cache_set_serve(local_context: dict, config: Config):
+    """
+    Instantiate GpuCacheManager singleton, set it into serving mode and load gpu cache
+    """
+    gpu_cache_manager = GpuCacheManager(config)
+    gpu_cache_manager.set_mode(GpuCacheManagerMode.SERVING)
+    gpu_cache_manager.load(local_context["device"])
+
+def mp_gpu_cache_set_disable(local_context: dict):
+    """
+    Set GpuCacheManager singleton in disabled mode
+    """    
+    GpuCacheManager(None).set_mode(GpuCacheManagerMode.DISABLED)    
+
+def mp_gpu_cache_get_device_modules(local_context: dict):
+    """
+    Get modules keys that reside on a GPU device
+    """
+    modules = []
+    for module in local_context["modules"]:
+        if getattr(module.device, "type", None) != "cpu":
+            modules.append(module.key)
+            
+    return modules
 
 # -- Disk tier (generator/disk_cache.py), rank side --------------------------------------------------------------
 #

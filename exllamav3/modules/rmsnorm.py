@@ -201,7 +201,7 @@ class RMSNorm(Module):
                 "unweighted": self.unweighted,
                 "groups": self.groups,
             },
-            "weight": producer.send(self.weight),
+            "weight": producer.send(self.get_tensor_key("weight"), self.weight),
             "device": self.device,
         }
 

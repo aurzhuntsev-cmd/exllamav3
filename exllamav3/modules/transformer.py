@@ -257,8 +257,8 @@ class TransformerBlock(Module):
             )},
             # Per-layer scalars load from the tensor collection, which TP children don't have
             "layer_scalar_f": self.layer_scalar_f,
-            "attn_resid_scalar": producer.send(self.attn_resid_scalar),
-            "mlp_resid_scalar": producer.send(self.mlp_resid_scalar),
+            "attn_resid_scalar": producer.send(self.get_tensor_key("attn_resid_scalar"), self.attn_resid_scalar),
+            "mlp_resid_scalar": producer.send(self.get_tensor_key("attn_resid_scalar"), self.mlp_resid_scalar),
             "device": self.device,
         }
 

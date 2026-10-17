@@ -5,6 +5,7 @@ from multiprocessing import shared_memory
 import uuid
 from .model_tp_cuda import cuda_host_register, cuda_host_unregister, CUDA_HOST_REGISTER_PORTABLE
 from ..util.shm import check_shm_capacity
+from .model_tp_gpu_cache import GpuCacheManager, GpuCacheManagerMode
 
 DEFAULT_BUFFER_SIZE = 2 * 1024 ** 3
 MAX_CACHE_PER_PROCESS = 4 * 1024**3
@@ -44,7 +45,7 @@ def _cache_insert(owner: SMProducer | SMConsumer, cache_id: int, tensor: torch.T
 
 class SMProducer:
     def __init__(
-        self,
+        self,        
         shm_name: str | None = None,
         buffer_size: int = DEFAULT_BUFFER_SIZE,
     ):
@@ -81,7 +82,7 @@ class SMProducer:
             "buffer_size": self.buffer_size,
         }
 
-    def send(self, tensor: torch.Tensor | None, cache_id: int = None) -> dict:
+    def send(self, key: str, tensor: torch.Tensor | None, cache_id: int = None) -> dict:
         """
         Copy a tensor into shared memory and return a compact import descriptor.
 
@@ -93,6 +94,13 @@ class SMProducer:
         if tensor is None:
             return {
                 "method": "none_tensor",
+            }
+        
+        if tensor.dtype == torch.int32 and tensor.numel() <= 1:                                                
+            return {                
+                "method": "scalar",
+                "value": int(tensor.item()),             
+                "dim": len(tensor.shape)
             }
 
         # Bytes to export
@@ -134,6 +142,7 @@ class SMProducer:
 
         # Data is now buffered in shared memory space, store metadata and offset
         return {
+            "key": key,
             "method": "buffer",
             "offset": offset,
             "nbytes": nbytes,
@@ -171,6 +180,10 @@ class SMConsumer:
         self.pin_memory = pin_memory
         self.device = device
         torch.cuda.set_device(self.device)
+
+        self.gpu_cache_manager = None
+        if GpuCacheManager.enabled():
+            self.gpu_cache_manager = GpuCacheManager(None)
 
         def get_local_tensor(shm_buf, _buffer_size):
             # Create local uint8 tensor mapping the entire shared buffer
@@ -238,9 +251,16 @@ class SMConsumer:
         # Get method
         method = imp.get("method")
 
+
         # Send was None
         if method == "none_tensor":
             return None
+
+        if method == "scalar":
+            if imp["dim"] == 0:
+                return torch.tensor(imp["value"], dtype = torch.int32, device = self.device if cuda else "cpu")
+            else:
+                return torch.tensor([imp["value"]], dtype = torch.int32, device = self.device if cuda else "cpu")
 
         # Send was cached
         cache_id = imp.get("cache_id")  # Always initialize
@@ -249,9 +269,14 @@ class SMConsumer:
             assert not cuda, "Cannot share cached tensor for CUDA"
             return self.cached_cpu_tensors[cache_id]
 
+        if self.gpu_cache_manager != None and cuda and method == "buffer":
+            tensor = self.gpu_cache_manager.get_tensor(imp["key"])
+            if tensor is not None: 
+                return tensor        
+
         # Fallback method
         if method == "share_memory":
-            tensor = imp["shared_tensor"]
+            tensor = imp["shared_tensor"]        
 
         # Construct Torch tensor in shared memory
         else:
@@ -280,6 +305,9 @@ class SMConsumer:
         elif imp["method"] != "share_memory" or not tensor.is_contiguous():
             tensor = tensor.clone(memory_format = torch.contiguous_format)
 
+        if self.gpu_cache_manager != None and cuda and method == "buffer":
+            self.gpu_cache_manager.capture(self.device, imp["key"], tensor) if self.device >= 0 else None
+
         return tensor
 
 
@@ -293,10 +321,10 @@ class SMConsumer:
 class TPTensorWrapper:
 
     @staticmethod
-    def tp_export(t: torch.Tensor, plan, producer):
+    def tp_export(key: str, t: torch.Tensor, plan, producer):
         return {
             "cls": TPTensorWrapper,
-            "weight": producer.send(t),
+            "weight": producer.send(key, t),
             "device": t.device,
         }
 

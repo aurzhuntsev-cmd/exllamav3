@@ -56,6 +56,9 @@ class LinearFP16:
             self.bias,
         )
 
+    def get_tensor_key(self, key: str) -> str:
+        return f"{self.key}.{key}"
+
     def unload(self):
         pass
 
@@ -130,8 +133,8 @@ class LinearFP16:
             "cls": LinearFP16,
             "in_features": self.in_features,
             "out_features": self.out_features,
-            "weight": producer.send(self.weight),
-            "bias": producer.send(self.bias),
+            "weight": producer.send(self.get_tensor_key("weight"), self.weight),
+            "bias": producer.send(self.get_tensor_key("weight"), self.bias),
             "out_dtype": self.out_dtype,
         }
 

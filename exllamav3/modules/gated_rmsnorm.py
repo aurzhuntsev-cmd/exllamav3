@@ -144,7 +144,7 @@ class GatedRMSNorm(Module):
                 "gate_first": self.gate_first,
                 "gate_activation": self.gate_activation,
             },
-            "weight": producer.send(self.weight),
+            "weight": producer.send(self.get_tensor_key("weight"), self.weight),
             "device": self.device,
         }
 

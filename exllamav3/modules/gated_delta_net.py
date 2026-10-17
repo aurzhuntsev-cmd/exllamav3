@@ -1256,7 +1256,11 @@ class GatedDeltaNet(Module):
             slots_scan_in = get_for_device(params, "recurrent_slots_scan_in", self.device) if scan_history else None
             layer_instance = (self.layer_idx, params.get("layer_instance", 0))
             if rsg[0].exported:
-                rsl = self.tp_recurrent_lookup[rsg[0].cache]
+                rsl = self.tp_recurrent_lookup.get(rsg[0].cache)
+                if rsl is None and len(self.tp_recurrent_lookup) == 1:
+                    rsl =  next(iter(self.tp_recurrent_lookup.values()))
+                if rsl is None:
+                    raise KeyError("Cache id not found in the lookup.")
             else:
                 rsl = rsg[0].cache.get_recurrent_layer(layer_instance)
             conv_state, recurrent_state = rsl.get_state_tensors()
@@ -1544,12 +1548,12 @@ class GatedDeltaNet(Module):
     def tp_export(self, plan, producer):
         assert self.device is not None, "Cannot export module for TP before loading."
 
-        def _export(child):
+        def _export(key, child):
             nonlocal producer
             if child is None:
                 return None
             if isinstance(child, torch.Tensor):
-                return TPTensorWrapper.tp_export(child, plan, producer)
+                return TPTensorWrapper.tp_export(key, child, plan, producer)
             else:
                 return child.tp_export(plan, producer)
 
@@ -1575,7 +1579,7 @@ class GatedDeltaNet(Module):
             "num_k_heads": self.num_k_heads,
             "num_v_heads": self.num_v_heads,
             "num_kv_group": self.num_v_heads // self.num_k_heads,
-            **{name: _export(getattr(self, name, None)) for name in (
+            **{name: _export(name, getattr(self, name, None)) for name in (
                 "qkv_proj",
                 "z_proj",
                 "b_proj",

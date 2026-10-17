@@ -94,6 +94,8 @@ class LinearEXL3:
             g_tensor_cache.get(*self.bsz1_xh_args)
         )
 
+    def get_tensor_key(self, key: str) -> str:
+        return f"{self.key}.{key}"
 
     def unload(self):
         # g_tensor_cache.drop(*self.bsz1_xh_args)
@@ -283,12 +285,12 @@ class LinearEXL3:
             "cls": LinearEXL3,
             "in_features": self.in_features,
             "out_features": self.out_features,
-            "suh": producer.send(self.suh),
-            "svh": producer.send(self.svh),
-            "trellis": producer.send(self.trellis),
-            "bias": producer.send(self.bias),
-            "mcg": producer.send(self.mcg_tensor),
-            "mul1": producer.send(self.mul1_tensor),
+            "suh": producer.send(self.get_tensor_key("suh"), self.suh),
+            "svh": producer.send(self.get_tensor_key("svh"), self.svh),
+            "trellis": producer.send(self.get_tensor_key("trellis"), self.trellis),
+            "bias": producer.send(self.get_tensor_key("bias"), self.bias),
+            "mcg": producer.send(self.get_tensor_key("mcg_tensor"), self.mcg_tensor),
+            "mul1": producer.send(self.get_tensor_key("mul1_tensor"), self.mul1_tensor),
             "out_dtype": self.out_dtype,
         }
 

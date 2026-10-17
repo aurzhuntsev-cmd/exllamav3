@@ -298,7 +298,7 @@ class Embedding(Module):
             exported["table"] = self.embedding.table.export(self.config.stc)
             exported["signs"] = producer.send(signs) if signs is not None else None
         else:
-            exported["embedding.weight"] = producer.send(self.embedding.weight)
+            exported["embedding.weight"] = producer.send(self.get_tensor_key("weight"), self.embedding.weight)
         return exported
 
     @staticmethod
