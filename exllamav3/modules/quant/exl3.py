@@ -357,33 +357,49 @@ class LinearEXL3:
         id_svh = exported["svh"]
         id_trellis = exported["trellis"]
         id_bias = exported["bias"]
+
+        for id_ in (id_svh, id_trellis, id_bias):
+            id_["gpu_cache_split"] = True
+
         mcg = consumer.recv(exported["mcg"], cuda = True)
         mul1 = consumer.recv(exported["mul1"], cuda = True)
+        suh = consumer.recv(id_suh, cuda = True)
 
-        svh_ = []
-        trellis_ = []
-        bias_ = []
-        in_features = 0
-        out_features = 0
+        svh = consumer.recv(id_svh, cuda = True)
+        if svh is None:
+            svh_ = []
+            trellis_ = []
+            bias_ = []
+            in_features = 0
+            out_features = 0
 
-        for split in splits:
-            assert split is not None
-            split_out, first, last = split
-            assert split_out
+            for split in splits:
+                assert split is not None
+                split_out, first, last = split
+                assert split_out
 
-            suh = consumer.recv(id_suh, cuda = True)
-            svh = consumer.recv(id_svh, cuda = True, slice_dim = 0, first = first, last = last)
-            trellis = consumer.recv(id_trellis, cuda = True, slice_dim = 1, first = first // 16, last = last // 16)
-            bias = consumer.recv(id_bias, cuda = True, slice_dim = 0, first = first, last = last)
+                svh = consumer.recv(id_svh, cuda = True, slice_dim = 0, first = first, last = last)
+                trellis = consumer.recv(id_trellis, cuda = True, slice_dim = 1, first = first // 16, last = last // 16)
+                bias = consumer.recv(id_bias, cuda = True, slice_dim = 0, first = first, last = last)
+                in_features = exported["in_features"]
+                out_features += last - first
+                svh_.append(svh)
+                trellis_.append(trellis)
+                bias_.append(bias)
+
+            svh = torch.cat(svh_, dim = 0)
+            trellis = torch.cat(trellis_, dim = 1)
+            bias = torch.cat(bias_, dim = 0) if bias_[0] is not None else None
+
+            svh = consumer.recv(id_svh, cuda = True, cache_tensor = svh)
+            trellis = consumer.recv(id_trellis, cuda = True, cache_tensor = trellis)
+            if bias is not None:
+                bias = consumer.recv(id_bias, cuda = True, cache_tensor = bias)
+        else:
+            trellis = consumer.recv(id_trellis, cuda = True)
+            bias = consumer.recv(id_bias, cuda = True)
             in_features = exported["in_features"]
-            out_features += last - first
-            svh_.append(svh)
-            trellis_.append(trellis)
-            bias_.append(bias)
-
-        svh = torch.cat(svh_, dim = 0)
-        trellis = torch.cat(trellis_, dim = 1)
-        bias = torch.cat(bias_, dim = 0) if bias_[0] is not None else None
+            out_features = sum(last - first for _, first, last in splits)
 
         module = LinearEXL3(
             config = None,

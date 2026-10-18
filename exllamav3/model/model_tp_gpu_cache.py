@@ -233,11 +233,12 @@ class GpuCacheManager:
 
         return self._modules.get(key)
 
-    def get_tensor(self, device: int, key: str) -> torch.Tensor:
+    def get_tensor(self, device: int, key: str, peek: bool = False) -> torch.Tensor:
         if self._mode != GpuCacheManagerMode.SERVING:
             return None
 
-        if key is None or not key in self._manifest:
+        if key is None or not key in self._tensors:
+            if peek: return None
             raise KeyError(f"Key {key} not found in gpu cache for current device.")        
         
         return self._tensors[key]

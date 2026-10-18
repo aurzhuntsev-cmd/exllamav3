@@ -236,6 +236,7 @@ class SMConsumer:
         slice_dim: int | None = None,
         first: int | None = None,
         last: int | None = None,
+        cache_tensor: torch.Tensor | None = None
     ) -> torch.Tensor | None:
         """
         Reconstruct a tensor from a producer descriptor.
@@ -251,7 +252,6 @@ class SMConsumer:
         # Get method
         method = imp.get("method")
 
-
         # Send was None
         if method == "none_tensor":
             return None
@@ -266,6 +266,14 @@ class SMConsumer:
             # print("receiving cached:", cache_id)
             assert not cuda, "Cannot share cached tensor for CUDA"
             return self.cached_cpu_tensors[cache_id]
+
+        if cuda and method == "buffer" and slice_dim is None:
+            if cache_tensor is not None:
+                if self.gpu_cache_manager is not None and self.device >= 0:
+                    self.gpu_cache_manager.capture(self.device, imp["key"], cache_tensor)
+                return cache_tensor
+            if imp.get("gpu_cache_split"):
+                return self.gpu_cache_manager.get_tensor(self.device, imp["key"]) if self.gpu_cache_manager is not None else None
 
         if self.gpu_cache_manager != None and cuda and method == "buffer":
             cache_key = f"{imp['key']}_{first}_{last}" if slice_dim is not None else imp["key"]
@@ -304,7 +312,7 @@ class SMConsumer:
         elif imp["method"] != "share_memory" or not tensor.is_contiguous():
             tensor = tensor.clone(memory_format = torch.contiguous_format)
 
-        if self.gpu_cache_manager != None and cuda and method == "buffer":
+        if self.gpu_cache_manager != None and cuda and method == "buffer" and not imp.get("gpu_cache_split"):
             cache_key = f"{imp['key']}_{first}_{last}" if slice_dim is not None else imp["key"]
             self.gpu_cache_manager.capture(self.device, cache_key, tensor) if self.device >= 0 else None
 
@@ -351,13 +359,19 @@ class TPTensorWrapper:
         device = local_context["device"]
         id_w = exported["weight"]
 
-        w_ = []
+        id_w["gpu_cache_split"] = True
 
-        for split in splits:
-            assert split is not None
-            _, first, last = split
-            w = consumer.recv(id_w, cuda = True, slice_dim = 0, first = first, last = last)
-            w_.append(w)
+        w = consumer.recv(id_w, cuda = True)
+        if w is None:
+            w_ = []
 
-        w = torch.cat(w_, dim = 0).contiguous()
+            for split in splits:
+                assert split is not None
+                _, first, last = split
+                w = consumer.recv(id_w, cuda = True, slice_dim = 0, first = first, last = last)
+                w_.append(w)
+
+            w = torch.cat(w_, dim = 0).contiguous()
+            w = consumer.recv(id_w, cuda = True, cache_tensor = w)
+
         return w
