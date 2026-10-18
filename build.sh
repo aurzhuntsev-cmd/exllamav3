@@ -71,19 +71,19 @@ done
 # Ensure build directory exists (persistent object files for incremental builds)
 mkdir -p build
 
-# Python 3.12 virtual environment
-PYTHON="python3.12"
+# Python 3.14 virtual environment
+PYTHON="python3.14"
 VENV_DIR=".venv"
 
 # Install Python dev headers if missing (requires sudo)
-if ! dpkg -s python3.12-dev &>/dev/null; then
-    echo "WARNING: python3.12-dev is not installed. Please run:"
-    echo "  sudo apt-get install -y python3.12-dev"
+if ! dpkg -s python3.14-dev &>/dev/null; then
+    echo "WARNING: python3.14-dev is not installed. Please run:"
+    echo "  sudo apt-get install -y python3.14-dev"
     echo "Then re-run this script."
     exit 1
 fi
 if [ ! -d "$VENV_DIR" ]; then
-    echo "Creating Python 3.12 virtual environment in $VENV_DIR..."
+    echo "Creating Python 3.14 virtual environment in $VENV_DIR..."
     $PYTHON -m venv "$VENV_DIR"
 fi
 

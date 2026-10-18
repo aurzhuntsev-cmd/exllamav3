@@ -47,3 +47,9 @@ def cuda_device_get_attribute(attr: int, device: int) -> int:
     Query a cudaDeviceAttr value for the given device ordinal.
     """
     return ext.cuda_device_get_attribute(attr, device)
+
+def cuda_load_file_direct(ptr: int, path: str, file_size: int) -> int:
+    """
+    Load a file directly into device mem
+    """
+    return ext.cuda_load_file_direct(ptr, path, file_size)

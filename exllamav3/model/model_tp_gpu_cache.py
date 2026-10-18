@@ -5,7 +5,7 @@ from pathlib import Path
 import json, pickle
 import mmap
 import time
-from .model_tp_cuda import *
+from .model_tp_cuda import cuda_load_file_direct
 import numpy as np
 
 GPU_CACHE_ENV_VAR                   = "EXL3_TP_CACHE_ENABLE"
@@ -179,29 +179,30 @@ class GpuCacheManager:
         path = self._get_tensor_dump_path(device)
             
         dump_size = os.path.getsize(path)                                            
-        dump = open(path, "rb")        
-        dump_mm = mmap.mmap(dump.fileno(), length=0, access=mmap.ACCESS_READ)
-        dump_mm_mv = memoryview(dump_mm)
-        dump_mm_ptr = np.frombuffer(dump_mm, dtype=np.uint8).ctypes.data
-
-        torch.cuda.set_device(device)  
         
-        cpu_buffer = torch.empty(min(CPU_CACHE_LOAD_CHUNK_SIZE, dump_size), dtype=torch.uint8, pin_memory=True)
-        cpu_buffer_mv = memoryview(cpu_buffer.numpy())
         gpu_buf = torch.empty(dump_size, dtype=torch.uint8, device=device)              
+        read_bytes = cuda_load_file_direct(gpu_buf.data_ptr(), path, dump_size)
 
-        offset = 0        
-        while offset < dump_size:
-            chunk_size = min(CPU_CACHE_LOAD_CHUNK_SIZE, dump_size - offset)
-            start_time = time.perf_counter()
-            cpu_buffer_mv[:chunk_size] = dump_mm_mv[offset:(offset + chunk_size)]
-            gpu_buf[offset:(offset + chunk_size)].copy_(cpu_buffer[:chunk_size], non_blocking=True)
-            offset += chunk_size                    
+        if read_bytes <= 0: # Fallback
+            print("Warning: cuda_load_file_direct failed, using fallback path (slower)")
+            dump = open(path, "rb")        
+            dump_mm = mmap.mmap(dump.fileno(), length=0, access=mmap.ACCESS_READ)
+            dump_mm_mv = memoryview(dump_mm)            
+            cpu_buffer = torch.empty(min(CPU_CACHE_LOAD_CHUNK_SIZE, dump_size), dtype=torch.uint8, pin_memory=True)
+            cpu_buffer_mv = memoryview(cpu_buffer.numpy())
         
-        cpu_buffer_mv.release()
-        dump_mm_mv.release()
-        dump_mm.close()
-        dump.close()
+            offset = 0        
+            while offset < dump_size:
+                chunk_size = min(CPU_CACHE_LOAD_CHUNK_SIZE, dump_size - offset)
+                start_time = time.perf_counter()
+                cpu_buffer_mv[:chunk_size] = dump_mm_mv[offset:(offset + chunk_size)]
+                gpu_buf[offset:(offset + chunk_size)].copy_(cpu_buffer[:chunk_size], non_blocking=True)
+                offset += chunk_size                    
+            
+            cpu_buffer_mv.release()
+            dump_mm_mv.release()
+            dump_mm.close()
+            dump.close()
 
         self._tensors = {}
         for key, tensor in self._manifest.items():

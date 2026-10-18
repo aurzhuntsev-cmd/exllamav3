@@ -16,3 +16,4 @@ uintptr_t cuda_host_get_device_pointer(uintptr_t ptr);
 void cuda_memcpy_async(uintptr_t dst, uintptr_t src, size_t nbytes, int kind);
 int cuda_device_get_attribute(int attr, int device);
 at::Tensor pinned_cuda_view(const at::Tensor& t, int64_t device);
+ssize_t cuda_load_file_direct(uintptr_t dst_gpu_addr, const char* path, size_t file_size);
