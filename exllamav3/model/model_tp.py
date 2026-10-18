@@ -502,9 +502,7 @@ class Model_TPMixin:
         tp_backend: str,
         verbose: bool,
         tp_options: dict,
-    ):
-        start_time = time.perf_counter()
-
+    ):    
         assert use_per_device is None or reserve_per_device is None
         if dev_limits is None: dev_limits = {}
 
@@ -572,6 +570,8 @@ class Model_TPMixin:
             [(producer.export(),) if d != tp_output_device else (producer,) for d in active_devices]
         )
 
+        start_time = time.perf_counter()
+        
         gpu_cache_manager = None
         if GpuCacheManager.enabled():
             gpu_cache_manager = GpuCacheManager(config.directory)
@@ -581,6 +581,10 @@ class Model_TPMixin:
             else:
                 gpu_cache_manager.set_mode(GpuCacheManagerMode.CAPTURING)                
                 self.tp_worker_dispatch_wait_multi(self.active_devices, mp_gpu_cache_set_capture, (config.directory,))
+
+        end_time = time.perf_counter()
+        execution_time = end_time - start_time        
+        print(f"Cache init time: {execution_time} seconds")
 
         # Begin loading modules
 
@@ -640,11 +644,7 @@ class Model_TPMixin:
 
         config.stc.close()
         self.loaded_tp = True
-        end_time = time.perf_counter()
-        execution_time = end_time - start_time
 
-        print(f"Execution time: {execution_time} seconds")
-        
         if 'yield' in locals():
             yield
 
