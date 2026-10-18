@@ -4,9 +4,12 @@ uv.lock
 
 *.pyc
 __pycache__/
+exllamav3/build/
 .idea
 venv
+.venv/
 dist
+*.so
 
 # produced by `pip install -e .`
 exllamav3_ext.cpython-*.so

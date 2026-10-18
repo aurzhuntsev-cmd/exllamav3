@@ -96,7 +96,7 @@ class SMProducer:
                 "method": "none_tensor",
             }
         
-        if tensor.dtype == torch.int32 and tensor.numel() <= 1:                                                
+        if tensor.dtype == torch.int32 and tensor.numel() <= 1 and len(tensor.shape) <= 1:
             return {                
                 "method": "scalar",
                 "value": int(tensor.item()),             
@@ -257,10 +257,8 @@ class SMConsumer:
             return None
 
         if method == "scalar":
-            if imp["dim"] == 0:
-                return torch.tensor(imp["value"], dtype = torch.int32, device = self.device if cuda else "cpu")
-            else:
-                return torch.tensor([imp["value"]], dtype = torch.int32, device = self.device if cuda else "cpu")
+            value = imp["value"] if imp["dim"] == 0 else [imp["value"]]
+            return torch.tensor(value, dtype = torch.int32, device = self.device if cuda else "cpu")
 
         # Send was cached
         cache_id = imp.get("cache_id")  # Always initialize

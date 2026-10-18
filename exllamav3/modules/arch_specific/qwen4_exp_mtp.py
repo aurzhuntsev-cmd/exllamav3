@@ -155,7 +155,7 @@ class Qwen4ExpMTPInputLayer(Module):
         if not self.attached_model().loaded_tp:
             emb = self.attached_model().modules[0].forward(x, params, out_dtype = torch.half)
         else:
-            emb = self.attached_model().tp_producer.send(x)
+            emb = self.attached_model().tp_producer.send(None, x)
             emb = self.attached_model().tp_dispatch_master(mp_model_forward_embedding, (emb, params)).half()
         emb = self.pre_fc_norm_embedding.forward(to_device(emb, self.device), params)
         emb = self.fc_embedding.forward(emb, params)                           # (b, s, D)

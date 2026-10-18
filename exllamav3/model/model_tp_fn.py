@@ -11,7 +11,6 @@ from .model_tp_backend import TPBackendNCCL, TPBackendNative, TPBackendNull
 from ..tokenizer.mm_embedding import recv_embeddings
 from ..util import log_tp, set_t0
 from .model_tp_gpu_cache import GpuCacheManager, GpuCacheManagerMode
-from ..model.config import Config
 
 _no_fwd_barrier = os.environ.get("EXL3_TP_NO_FWD_BARRIER", "1") != "0"
 _stream_hash_passes = int(os.environ.get("EXL3_TP_STREAM_HASH", "0") or "0")
@@ -597,17 +596,17 @@ def mp_cpu_cache_fetch(local_context: dict, cache_ids: list[int], slot: int, pag
         tensor[page_index].copy_(buffer, non_blocking = True)
     pool.note_copies(slot)
 
-def mp_gpu_cache_set_capture(local_context: dict, config: Config):
+def mp_gpu_cache_set_capture(local_context: dict, directory: str):
     """
     Instantiate GpuCacheManager singleton and set it into capturing mode
     """    
-    GpuCacheManager(config).set_mode(GpuCacheManagerMode.CAPTURING)
+    GpuCacheManager(directory).set_mode(GpuCacheManagerMode.CAPTURING)
 
-def mp_gpu_cache_set_serve(local_context: dict, config: Config):
+def mp_gpu_cache_set_serve(local_context: dict, directory: str):
     """
     Instantiate GpuCacheManager singleton, set it into serving mode and load gpu cache
     """
-    gpu_cache_manager = GpuCacheManager(config)
+    gpu_cache_manager = GpuCacheManager(directory)
     gpu_cache_manager.set_mode(GpuCacheManagerMode.SERVING)
     gpu_cache_manager.load(local_context["device"])
 

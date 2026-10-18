@@ -87,7 +87,14 @@ def _rewind_layers(layers, slot: int, last_history: int, num_tokens: int,
 def mp_cache_recurrent_rewind(local_context: dict, cache_id: int, slot: int, last_history, num_tokens,
                               spec_row, spec_shape, base_row, scratch_row):
     recurrent_modules = local_context["recurrent_modules"]
-    layers = [module.tp_recurrent_lookup[cache_id] for module in recurrent_modules]
+    layers = [
+        module.tp_recurrent_lookup[cache_id]
+        if cache_id in module.tp_recurrent_lookup
+        else next(iter(module.tp_recurrent_lookup.values()))
+        if len(module.tp_recurrent_lookup) == 1
+        else module.tp_recurrent_lookup[cache_id]   # raises KeyError
+        for module in recurrent_modules
+    ]
     _rewind_layers(layers, slot, last_history, num_tokens, spec_row, spec_shape, base_row, scratch_row)
 
 
@@ -96,7 +103,12 @@ def mp_cache_recurrent_stash_gdn(local_context: dict, cache_id: int, cp_handle: 
     recurrent_cache = local_context["recurrent_cache"]
     stashed = []
     for module in recurrent_modules:
-        l = module.tp_recurrent_lookup[cache_id]
+        l = module.tp_recurrent_lookup.get(cache_id)
+        if l is None and len(module.tp_recurrent_lookup) == 1:
+            l = next(iter(module.tp_recurrent_lookup.values()))
+        if l is None:
+            raise KeyError
+
         stashed.append(l.stash(slot, position, parity) if isinstance(l, GDNLayerState) else l.stash(slot, position))
     recurrent_cache[cp_handle] = stashed
 
@@ -106,7 +118,12 @@ def mp_cache_recurrent_unstash_gdn(local_context: dict, cache_id: int, cp_handle
     recurrent_cache = local_context["recurrent_cache"]
     stashed = recurrent_cache[cp_handle]
     for module, st in zip(recurrent_modules, stashed):
-        l = module.tp_recurrent_lookup[cache_id]
+        l = module.tp_recurrent_lookup.get(cache_id)
+        if l is None and len(module.tp_recurrent_lookup) == 1:
+            l = next(iter(module.tp_recurrent_lookup.values()))
+        if l is None:
+            raise KeyError
+        
         if isinstance(l, GDNLayerState):
             l.unstash(slot, st, position, parity)
         else:

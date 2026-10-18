@@ -401,7 +401,7 @@ class Model(Model_TPMixin, Model_LSMixin):
         """
         export = bool(params.get("export_draft_conf"))
         if self.loaded_tp:
-            state = self.tp_producer.send(state)
+            state = self.tp_producer.send(None, state)
             ids, conf = self.tp_dispatch_lm_head_argmax((state, {}), return_max = True)
             if export:
                 params["draft_conf"] = conf
