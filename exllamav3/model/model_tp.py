@@ -631,12 +631,10 @@ class Model_TPMixin:
         producer.close()
 
         if gpu_cache_manager is not None:
-            #gpu_modules = self.tp_worker_dispatch_wait_multi(self.active_devices, mp_gpu_cache_get_device_modules, ())
-            #gpu_modules_flat = [item for sublist in gpu_modules for item in sublist]            
-            #print(f"Before cleanup: {len(exported_modules)}")
-            #exported_modules = {key: value for key, value in exported_modules.items() if key in gpu_modules_flat}
-
-            print(f"After cleanup: {len(exported_modules)}")
+            gpu_modules = self.tp_worker_dispatch_wait_multi(self.active_devices, mp_gpu_cache_get_device_modules, ())
+            gpu_modules_flat = [item for sublist in gpu_modules for item in sublist]                        
+            exported_modules = {key: value for key, value in exported_modules.items() if key in gpu_modules_flat}
+            
             gpu_cache_manager.finalize(active_devices, exported_modules)
             self.tp_worker_dispatch_wait_multi(self.active_devices, mp_gpu_cache_set_disable, ())
 

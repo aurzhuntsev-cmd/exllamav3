@@ -608,7 +608,7 @@ def mp_gpu_cache_set_serve(local_context: dict, directory: str):
     """
     gpu_cache_manager = GpuCacheManager(directory)
     gpu_cache_manager.set_mode(GpuCacheManagerMode.SERVING)
-    gpu_cache_manager.load(local_context["device"])
+    gpu_cache_manager.init(local_context["device"])
 
 def mp_gpu_cache_set_disable(local_context: dict):
     """

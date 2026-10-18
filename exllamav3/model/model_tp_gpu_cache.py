@@ -3,6 +3,7 @@ from enum import Enum
 import torch
 from pathlib import Path
 import json, pickle
+import mmap
 
 GPU_CACHE_ENV_VAR                   = "EXL3_TP_CACHE_ENABLE"
 GPU_CACHE_BASE_PATH                 = ".tensorsplit"
@@ -59,9 +60,7 @@ class GpuCacheManager:
         file.write(b'\x00' * pad)
         return offset
     
-    def set_mode(self, mode: GpuCacheManagerMode):
-        self._mode = mode
-        
+    def set_mode(self, mode: GpuCacheManagerMode):                
         if mode == GpuCacheManagerMode.CAPTURING:
             if os.path.exists(self.base_path):
                 folder = Path(self.base_path)                        
@@ -69,6 +68,13 @@ class GpuCacheManager:
                     os.remove(file)
             else:                
                 os.mkdir(self.base_path)
+
+        if self._mode == GpuCacheManagerMode.SERVING and mode == GpuCacheManagerMode.DISABLED:
+            self._dump_mm.close()
+            self._dump.close()
+            del self._cpu_buffer
+
+        self._mode = mode
                 
     def valid(self, plan: list) -> bool:
         # 1. Check if cache folder exists at all
@@ -161,65 +167,24 @@ class GpuCacheManager:
         with open(self.modules_path, "wb") as f_modules:
             pickle.dump(exported_modules, f_modules)        
 
-    def load(self, device: int):
+    def init(self, device: int):
         if self._mode != GpuCacheManagerMode.SERVING:
             return
 
         # 1. Load tensor manifest
         with open(self.manifest_path, "r") as f_manifest:
-            tensor_manifest = json.load(f_manifest)
+            self._manifest = json.load(f_manifest)[str(device)]
 
-        # 2. Load dump into gpu memory
+        # 2. Prepare dump descriptor
         path = self._get_tensor_dump_path(device)
-        size = os.path.getsize(path)                            
-
-        torch.cuda.set_device(device)  
-        """
-        gpu_buf = torch.empty(size, dtype=torch.uint8, device=device)
-        cpu_buf = torch.empty(size, dtype=torch.uint8, pin_memory=True)            
-        
-        with open(path, "rb") as f_bin:
-            f_bin.readinto(cpu_buf.numpy())            
-                
-        gpu_buf.copy_(cpu_buf, non_blocking=True)
-        """
-
-        chunk = CPU_CACHE_LOAD_CHUNK_SIZE_MB * 1024 * 1024
-        gpu_buf = torch.empty(size, dtype=torch.uint8, device=device)
-        cpu_chunk = torch.empty(chunk, dtype=torch.uint8, pin_memory=True)            
-        mv = memoryview(cpu_chunk.numpy())        
-        
-        with open(path, "rb") as f:
-            offset = 0
-            while offset < size:
-                n = min(chunk, size - offset)
-                got = f.readinto(mv[:n])
-                if not got:
-                    break
-                gpu_buf[offset:offset + got].copy_(cpu_chunk[:got], non_blocking=True)                
-                torch.cuda.current_stream().synchronize()
-                offset += got
-
-
-        #torch.cuda.current_stream().synchronize() 
-
-        # 3. Reconstruct tensors
-        self._tensors = {}
-        for key, tensor in tensor_manifest[str(device)].items():            
-            dtype  = getattr(torch, tensor["dtype"].replace("torch.", ""))
-            shape  = tuple(tensor["shape"])    
-            nbytes = int(tensor["nbytes"])
-            start  = int(tensor["offset"])                                
-            end    = start + nbytes            
             
-            if start < 0 or end > gpu_buf.numel():
-                raise ValueError(
-                    f"Corrupt device dump: tensor {key!r} offset [{start}:{end}] is out of bounds "
-                    f"of device{device}.bin ({gpu_buf.numel()} bytes); delete the .tensorsplit cache and reload"
-                )                    
+        self._dump_size = os.path.getsize(path)                                            
+        self._dump = open(path, "rb", buffering=4*1024*1024)        
+        self._dump_mm = mmap.mmap(self._dump.fileno(), length=0, access=mmap.ACCESS_READ)
 
-            tensor = gpu_buf[start:end].view(dtype).view(shape).contiguous()
-            self._tensors[key] = tensor
+        max_nbytes = max((int(t["nbytes"]) for t in self._manifest.values()), default = 0)
+        self._cpu_buffer = torch.empty(max_nbytes, dtype=torch.uint8, pin_memory=True)
+        self._cpu_buffer_mv = memoryview(self._cpu_buffer.numpy())
 
     def get_module(self, key: str) -> object:
         if self._mode != GpuCacheManagerMode.SERVING:
@@ -231,13 +196,35 @@ class GpuCacheManager:
 
         return self._modules.get(key)
 
-    def get_tensor(self, key: str) -> torch.Tensor:
+    def get_tensor(self, device: int, key: str) -> torch.Tensor:
         if self._mode != GpuCacheManagerMode.SERVING:
             return None
 
-        if key is None or not key in self._tensors:
+        if key is None or not key in self._manifest:
             raise KeyError(f"Key {key} not found in gpu cache for current device.")
+        
+        tensor = self._manifest[key]
+        dtype  = getattr(torch, tensor["dtype"].replace("torch.", ""))
+        shape  = tuple(tensor["shape"])
+        nbytes = int(tensor["nbytes"])
+        start  = int(tensor["offset"])
+        end    = start + nbytes
 
-        return self._tensors[key]
+        if start < 0 or end > self._dump_size:
+            raise ValueError(
+                f"Corrupt device dump: tensor {key!r} offset [{start}:{end}] is out of bounds; "
+                f"delete the .tensorsplit cache and reload"
+            )
+
+        torch.cuda.set_device(device)  
+        
+        gpu_buf = torch.empty(nbytes, dtype=torch.uint8, device=device)                
+        self._cpu_buffer_mv[:nbytes] = memoryview(self._dump_mm)[start:end]
+        gpu_buf.copy_(self._cpu_buffer[:nbytes], non_blocking=True)
+        tensor = gpu_buf.view(dtype).view(shape)        
+        
+        torch.cuda.current_stream().synchronize() 
+        
+        return tensor
 
     

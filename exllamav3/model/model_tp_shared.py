@@ -269,7 +269,7 @@ class SMConsumer:
 
         if self.gpu_cache_manager != None and cuda and method == "buffer":
             cache_key = f"{imp['key']}_{first}_{last}" if slice_dim is not None else imp["key"]
-            tensor = self.gpu_cache_manager.get_tensor(cache_key)
+            tensor = self.gpu_cache_manager.get_tensor(self.device, cache_key)
             if tensor is not None: 
                 return tensor 
                    
