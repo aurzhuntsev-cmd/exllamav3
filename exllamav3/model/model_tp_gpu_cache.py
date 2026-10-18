@@ -70,11 +70,11 @@ class GpuCacheManager:
                 os.mkdir(self.base_path)
 
         if self._mode == GpuCacheManagerMode.SERVING and mode == GpuCacheManagerMode.DISABLED:
+            self._cpu_buffer_mv.release()
+            self._dump_mm_mv.release()
             self._dump_mm.close()
             self._dump.close()
-            del self._cpu_buffer
-
-        self._mode = mode
+            
                 
     def valid(self, plan: list) -> bool:
         # 1. Check if cache folder exists at all
@@ -181,6 +181,7 @@ class GpuCacheManager:
         self._dump_size = os.path.getsize(path)                                            
         self._dump = open(path, "rb", buffering=4*1024*1024)        
         self._dump_mm = mmap.mmap(self._dump.fileno(), length=0, access=mmap.ACCESS_READ)
+        self._dump_mm_mv = memoryview(self._dump_mm)
 
         max_nbytes = max((int(t["nbytes"]) for t in self._manifest.values()), default = 0)
         self._cpu_buffer = torch.empty(max_nbytes, dtype=torch.uint8, pin_memory=True)
@@ -219,7 +220,7 @@ class GpuCacheManager:
         torch.cuda.set_device(device)  
         
         gpu_buf = torch.empty(nbytes, dtype=torch.uint8, device=device)                
-        self._cpu_buffer_mv[:nbytes] = memoryview(self._dump_mm)[start:end]
+        self._cpu_buffer_mv[:nbytes] = self._dump_mm_mv[start:end]
         gpu_buf.copy_(self._cpu_buffer[:nbytes], non_blocking=True)
         tensor = gpu_buf.view(dtype).view(shape)        
         
