@@ -21,3 +21,9 @@ exllamav3/exllamav3_ext/**/hip_*
 
 # per-machine test model registry overrides (tests/testlib/models.py)
 tests/models.local.yaml
+
+# machine-specific build tooling, build log and personal IDE config
+build.log
+build.sh
+run.py
+.vscode/

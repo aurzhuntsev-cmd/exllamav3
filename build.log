@@ -1,3 +1,0 @@
-W1018 17:22:26.640000 22005 .venv/lib/python3.14/site-packages/torch/utils/cpp_extension.py:652] The detected CUDA version (13.4) has a minor version mismatch with the version that was used to compile PyTorch (13.0). Most likely this shouldn't be a problem.
-W1018 17:22:26.640000 22005 .venv/lib/python3.14/site-packages/torch/utils/cpp_extension.py:662] There are no x86_64-linux-gnu-g++ version bounds defined for CUDA version 13.4
-ninja: no work to do.
