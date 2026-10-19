@@ -5,7 +5,7 @@ from multiprocessing import shared_memory
 import uuid
 from .model_tp_cuda import cuda_host_register, cuda_host_unregister, CUDA_HOST_REGISTER_PORTABLE
 from ..util.shm import check_shm_capacity
-from .model_tp_gpu_cache import TPCacheManager, TPCacheManagerMode
+from .model_tp_cache import TPCacheManager, TPCacheManagerMode
 
 DEFAULT_BUFFER_SIZE = 2 * 1024 ** 3
 MAX_CACHE_PER_PROCESS = 4 * 1024**3

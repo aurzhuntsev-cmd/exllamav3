@@ -15,7 +15,7 @@ from .model_tp_fn import *
 import uuid
 from ..util import log_tp, global_t0
 from ..tokenizer.mm_embedding import send_embeddings
-from .model_tp_gpu_cache import TPCacheManager, TPCacheManagerMode
+from .model_tp_cache import TPCacheManager, TPCacheManagerMode
 
 cleanupper = Cleanupper()
 DISPATCH_TIMEOUT = 20
@@ -572,21 +572,21 @@ class Model_TPMixin:
 
         start_time = time.perf_counter()
     
-        gpu_cache_manager = None
+        tpcm = None
         if TPCacheManager.enabled():
-            gpu_cache_manager = TPCacheManager(config.directory)
-            if gpu_cache_manager.valid(self.plan):
-                gpu_cache_manager.set_mode(TPCacheManagerMode.SERVING)
+            tpcm = TPCacheManager(config.directory)
+            if tpcm.valid(self.plan):
+                tpcm.set_mode(TPCacheManagerMode.SERVING)
                 self.tp_worker_dispatch_wait_multi(
                     self.active_devices,
-                    mp_gpu_cache_set_serve,
+                    mp_tp_cache_set_serve,
                     (config.directory,list(self.cache_weakrefs.keys()))
                 )    
             else:
-                gpu_cache_manager.set_mode(TPCacheManagerMode.CAPTURING)                
+                tpcm.set_mode(TPCacheManagerMode.CAPTURING)                
                 self.tp_worker_dispatch_wait_multi(
                     self.active_devices,
-                    mp_gpu_cache_set_capture,
+                    mp_tp_cache_set_capture,
                     (config.directory,)
                 )
 
@@ -604,9 +604,9 @@ class Model_TPMixin:
                 if callback_sync: callback_sync(idx, len(modules))
                 if generator: yield idx, len(modules)
 
-                gpu_cache_module = gpu_cache_manager.get_module(module.key) if gpu_cache_manager is not None else None
-                if gpu_cache_module is not None:
-                    exported = gpu_cache_module
+                tp_cache_module = tpcm.get_module(module.key) if tpcm is not None else None
+                if tp_cache_module is not None:
+                    exported = tp_cache_module
                 else:
                     # Load module to CPU
                     defer = module.can_defer_load()
@@ -642,13 +642,13 @@ class Model_TPMixin:
         self.tp_worker_dispatch_wait_multi(self.active_devices, mp_close_consumer, ())
         producer.close()
 
-        if gpu_cache_manager is not None:
-            gpu_modules = self.tp_worker_dispatch_wait_multi(self.active_devices, mp_gpu_cache_get_device_modules, ())
+        if tpcm is not None:
+            gpu_modules = self.tp_worker_dispatch_wait_multi(self.active_devices, mp_tp_cache_get_device_modules, ())
             gpu_modules_flat = [item for sublist in gpu_modules for item in sublist]                        
             exported_modules = {key: value for key, value in exported_modules.items() if key in gpu_modules_flat}
                         
-            gpu_cache_manager.finalize(active_devices, exported_modules, self.plan)            
-            self.tp_worker_dispatch_wait_multi(self.active_devices, mp_gpu_cache_set_disable, ())
+            tpcm.finalize(active_devices, exported_modules, self.plan)            
+            self.tp_worker_dispatch_wait_multi(self.active_devices, mp_tp_cache_set_disable, ())
 
         config.stc.close()
         self.loaded_tp = True

@@ -10,7 +10,7 @@ from functools import lru_cache
 from .model_tp_backend import TPBackendNCCL, TPBackendNative, TPBackendNull
 from ..tokenizer.mm_embedding import recv_embeddings
 from ..util import log_tp, set_t0
-from .model_tp_gpu_cache import TPCacheManager, TPCacheManagerMode
+from .model_tp_cache import TPCacheManager, TPCacheManagerMode
 
 _no_fwd_barrier = os.environ.get("EXL3_TP_NO_FWD_BARRIER", "1") != "0"
 _stream_hash_passes = int(os.environ.get("EXL3_TP_STREAM_HASH", "0") or "0")
@@ -601,13 +601,13 @@ def mp_cpu_cache_fetch(local_context: dict, cache_ids: list[int], slot: int, pag
         tensor[page_index].copy_(buffer, non_blocking = True)
     pool.note_copies(slot)
 
-def mp_gpu_cache_set_capture(local_context: dict, directory: str):
+def mp_tp_cache_set_capture(local_context: dict, directory: str):
     """
     Instantiate GpuCacheManager singleton and set it into capturing mode
     """    
     TPCacheManager(directory).set_mode(TPCacheManagerMode.CAPTURING)
 
-def mp_gpu_cache_set_serve(local_context: dict, directory: str, cache_ids: list[int]):
+def mp_tp_cache_set_serve(local_context: dict, directory: str, cache_ids: list[int]):
     """
     Instantiate GpuCacheManager singleton, set it into serving mode and load gpu cache
     Also store cache ids to re-key later
@@ -618,13 +618,13 @@ def mp_gpu_cache_set_serve(local_context: dict, directory: str, cache_ids: list[
 
     local_context["tp_cache_ids"] = cache_ids
 
-def mp_gpu_cache_set_disable(local_context: dict):
+def mp_tp_cache_set_disable(local_context: dict):
     """
     Set GpuCacheManager singleton in disabled mode
     """    
     TPCacheManager(None).set_mode(TPCacheManagerMode.DISABLED)    
 
-def mp_gpu_cache_get_device_modules(local_context: dict):
+def mp_tp_cache_get_device_modules(local_context: dict):
     """
     Get modules keys that reside on a GPU device
     """
