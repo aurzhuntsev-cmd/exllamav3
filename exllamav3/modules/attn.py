@@ -1327,7 +1327,7 @@ class Attention(Module):
             # QSA indexer (Qwen3.8): replicated whole on the owning rank
             "qsa_indexer": _export(self.qsa_indexer),
             # Learned attention sinks (gpt-oss): one logit per query head, sliced to the local heads on import
-            "sinks": producer.send(self.sinks) if self.sinks is not None else None,
+            "sinks": producer.send(self.get_tensor_key("sinks"), self.sinks) if self.sinks is not None else None,
             "device": self.device,
             "cache_layers": [
                 cl.tp_export(plan) for cl in self.cache_layers

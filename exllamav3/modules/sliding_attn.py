@@ -1288,7 +1288,7 @@ class SlidingAttention(Module):
                 "g_proj",
             )},
             # Learned attention sinks (gpt-oss): one logit per query head, sliced to the local heads on import
-            "sinks": producer.send(self.sinks) if self.sinks is not None else None,
+            "sinks": producer.send(self.get_tensor_key("sinks"), self.sinks) if self.sinks is not None else None,
             "device": self.device,
             "recurrent_layers": [
                 rl.tp_export(plan) for rl in self.recurrent_layers
