@@ -71,7 +71,7 @@ class TPCacheManager:
             else:                
                 os.mkdir(self.base_path)                    
                 
-    def valid(self, plan: list) -> bool:
+    def valid(self, plan: list, active_devices: list) -> bool:
         # 1. Check if cache folder exists at all
         if not os.path.exists(self.base_path):
             return False        
@@ -89,7 +89,7 @@ class TPCacheManager:
                 return False            
 
         # 4. Check if device dumps exist and have proper footer:
-        for device, subplan in enumerate(plan):
+        for device in active_devices:
             path = self._get_tensor_dump_path(device)
             if not os.path.exists(path):
                 return False        
@@ -182,11 +182,11 @@ class TPCacheManager:
 
                             dst_offset += size  
 
-                
-                f.write(TP_CACHE_MAGIC.encode('ascii'))                
-                f.write(plan_hash.digest())
+                f.truncate(total_size)
 
-                f.truncate(total_size + TP_CACHE_FOOTER_SIZE)
+                f.seek(total_size)
+                f.write(TP_CACHE_MAGIC.encode('ascii'))                
+                f.write(plan_hash.digest())                
                         
             os.remove(list_path)         
             os.rename(source_path, dest_path)
@@ -228,11 +228,11 @@ class TPCacheManager:
         
             offset = 0        
             while offset < dump_size:
-                chunk_size = min(CACHE_LOAD_CHUNK_SIZE, dump_size - offset)
-                start_time = time.perf_counter()
+                chunk_size = min(CACHE_LOAD_CHUNK_SIZE, dump_size - offset)                
                 cpu_buffer_mv[:chunk_size] = dump_mm_mv[offset:(offset + chunk_size)]
                 gpu_buf[offset:(offset + chunk_size)].copy_(cpu_buffer[:chunk_size], non_blocking=True)
-                offset += chunk_size                    
+                offset += chunk_size       
+                torch.cuda.current_stream().synchronize()                             
             
             cpu_buffer_mv.release()
             dump_mm_mv.release()

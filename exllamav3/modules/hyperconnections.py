@@ -283,9 +283,9 @@ class HyperConnection(Module):
                 "hc_eps": self.hc_eps,
                 "rms_norm_eps": self.rms_eps,
             },
-            "fn": producer.send(self.fn),
-            "base": producer.send(self.base),
-            "scale": producer.send(self.scale),
+            "fn": producer.send(self.get_tensor_key("fn"), self.fn),
+            "base": producer.send(self.get_tensor_key("base"), self.base),
+            "scale": producer.send(self.get_tensor_key("scale"), self.scale),
             "device": self.device,
         }
 
@@ -675,10 +675,10 @@ class GatedResidual(Module):
                 "use_combine": self.use_combine,
                 "out_dtype": self.out_dtype,
             },
-            "norm_w_raw": producer.send(self.norm_w_raw),
-            "down": producer.send(self.down_h),
-            "up": producer.send(self.up_h),
-            "inject": producer.send(self.inject_h) if self.use_combine else None,
+            "norm_w_raw": producer.send(self.get_tensor_key("norm_w_raw"), self.norm_w_raw),
+            "down": producer.send(self.get_tensor_key("down_h"), self.down_h),
+            "up": producer.send(self.get_tensor_key("up_h"), self.up_h),
+            "inject": producer.send(self.get_tensor_key("inject_h"), self.inject_h) if self.use_combine else None,
             "device": self.device,
         }
 
@@ -773,9 +773,9 @@ class HyperHead(Module):
                 # GLM5.3: parameterless mean over the streams (fn/base/scale are None)
                 "mean": self.mean,
             },
-            "fn": producer.send(self.fn),
-            "base": producer.send(self.base),
-            "scale": producer.send(self.scale),
+            "fn": producer.send(self.get_tensor_key("fn"), self.fn),
+            "base": producer.send(self.get_tensor_key("base"), self.base),
+            "scale": producer.send(self.get_tensor_key("scale"), self.scale),
             "device": self.device,
         }
 

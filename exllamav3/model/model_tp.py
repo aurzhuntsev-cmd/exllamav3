@@ -570,12 +570,10 @@ class Model_TPMixin:
             [(producer.export(),) if d != tp_output_device else (producer,) for d in active_devices]
         )
 
-        start_time = time.perf_counter()
-    
         tpcm = None
         if TPCacheManager.enabled():
             tpcm = TPCacheManager(config.directory)
-            if tpcm.valid(self.plan):
+            if tpcm.valid(self.plan, self.active_devices):
                 tpcm.set_mode(TPCacheManagerMode.SERVING)
                 self.tp_worker_dispatch_wait_multi(
                     self.active_devices,
@@ -589,10 +587,6 @@ class Model_TPMixin:
                     mp_tp_cache_set_capture,
                     (config.directory,)
                 )
-
-        end_time = time.perf_counter()
-        execution_time = end_time - start_time        
-        print(f"Cache init time: {execution_time} seconds")
 
         # Begin loading modules
 

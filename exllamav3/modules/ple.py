@@ -314,7 +314,7 @@ class PLELayer(Module):
                 "mm_token_id": self.mm_token_id,
             },
             **{n: getattr(self, n).tp_export(plan, producer) for n in self._tp_submodules},
-            "conv_w": producer.send(self.conv_w),
+            "conv_w": producer.send(self.get_tensor_key("conv_w"), self.conv_w),
             "recurrent_layers": [rl.tp_export(plan) for rl in self.recurrent_layers],
             "device": self.device,
         }

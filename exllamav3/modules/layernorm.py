@@ -129,8 +129,8 @@ class LayerNorm(Module):
                 "layernorm_eps": self.layernorm_eps,
                 "out_dtype": self.out_dtype,
             },
-            "weight": producer.send(self.weight),
-            "bias": producer.send(self.bias),
+            "weight": producer.send(self.get_tensor_key("weight"), self.weight),
+            "bias": producer.send(self.get_tensor_key("bias"), self.bias),
             "device": self.device,
         }
 

@@ -176,8 +176,11 @@ ssize_t cuda_load_file_direct(uintptr_t dst_gpu_addr,
                     ? static_cast<size_t>(n)
                     : remaining;
 
-        cudaMemcpyAsync(dst + offset, host[slot], push,
-                        cudaMemcpyHostToDevice, stream[slot]);
+        if (cudaSuccess != cudaMemcpyAsync(dst + offset, host[slot], push,
+                        cudaMemcpyHostToDevice, stream[slot])) {
+            rc = -1;
+            break;
+        }                             
 
         offset += push;   
         ++i;

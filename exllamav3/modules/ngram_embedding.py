@@ -203,10 +203,10 @@ class NGramEmbedding(Module):
             },
             "table": self.table.export(self.config.stc),
             "quantized": self.K is not None,
-            "head_offsets": producer.send(self.head_offsets),
-            "head_vocab_sizes": producer.send(self.head_vocab_sizes),
-            "layer_multipliers": producer.send(self.layer_multipliers),
-            "head_bias": producer.send(self.head_bias) if self.head_bias is not None else None,
+            "head_offsets": producer.send(self.get_tensor_key("head_offsets"), self.head_offsets),
+            "head_vocab_sizes": producer.send(self.get_tensor_key("head_vocab_sizes"), self.head_vocab_sizes),
+            "layer_multipliers": producer.send(self.get_tensor_key("layer_multipliers"), self.layer_multipliers),
+            "head_bias": producer.send(self.get_tensor_key("head_bias"), self.head_bias) if self.head_bias is not None else None,
             "device": self.device,
         }
 
