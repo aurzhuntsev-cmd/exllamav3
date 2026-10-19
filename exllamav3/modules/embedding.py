@@ -296,9 +296,9 @@ class Embedding(Module):
             # Every rank streams the table's rows from disk through its own handles
             signs = self.embedding.signs
             exported["table"] = self.embedding.table.export(self.config.stc)
-            exported["signs"] = producer.send(signs) if signs is not None else None
+            exported["signs"] = producer.send(self.get_tensor_key("signs"), signs) if signs is not None else None
         else:
-            exported["embedding.weight"] = producer.send(self.embedding.weight)
+            exported["embedding.weight"] = producer.send(self.get_tensor_key("weight"), self.embedding.weight)
         return exported
 
     @staticmethod

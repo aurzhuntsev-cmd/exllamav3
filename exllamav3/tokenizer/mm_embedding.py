@@ -135,9 +135,9 @@ def send_embeddings(producer, ies: list[MMEmbedding]):
                 "align": ie.align,
                 "align_phase": ie.align_phase,
                 "align_lead": ie.align_lead,
-                "embeddings": producer.send(ie.embeddings, cache_id = id(ie.embeddings)),
+                "embeddings": producer.send("mmembedding.ie.embeddings", ie.embeddings, cache_id = id(ie.embeddings)),
                 "deepstack_embeddings": [
-                    producer.send(dse, cache_id = id(dse))
+                    producer.send("mmembedding.dse", dse, cache_id = id(dse))
                     for dse in ie.deepstack_embeddings
                 ] if ie.deepstack_embeddings is not None else None
             }

@@ -289,7 +289,7 @@ class DFlash2Model(Model):
             # Tensor-parallel target: each rank takes the selector's top-k over its vocabulary slice of
             # the head and the candidates are merged on the output device, so only k ids and scores per
             # row cross the ranks, never the logits. The drafter stays on one device
-            staged = target.tp_producer.send(state[:, 1:].half())
+            staged = target.tp_producer.send(None, state[:, 1:].half())
             unary, cands = target.tp_dispatch_lm_head_topk(
                 (staged, {}), self.selector.top_k,
                 scale = self.config.output_multiplier, softcap = self.config.final_logit_softcapping or 0.0,

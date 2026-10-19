@@ -56,6 +56,9 @@ class LinearFP16:
             self.bias,
         )
 
+    def get_tensor_key(self, key: str) -> str:
+        return f"{self.key}.{key}"
+
     def unload(self):
         pass
 
@@ -130,8 +133,8 @@ class LinearFP16:
             "cls": LinearFP16,
             "in_features": self.in_features,
             "out_features": self.out_features,
-            "weight": producer.send(self.weight),
-            "bias": producer.send(self.bias),
+            "weight": producer.send(self.get_tensor_key("weight"), self.weight),
+            "bias": producer.send(self.get_tensor_key("bias"), self.bias),
             "out_dtype": self.out_dtype,
         }
 
@@ -184,24 +187,37 @@ class LinearFP16:
         id_w = exported["weight"]
         id_b = exported["bias"]
 
-        w_ = []
-        b_ = []
-        in_features = 0
-        out_features = 0
+        id_w["gpu_cache_split"] = True
+        id_b["gpu_cache_split"] = True
 
-        for split in splits:
-            assert split is not None
-            split_out, first, last = split
-            assert split_out
-            w = consumer.recv(id_w, cuda = True, slice_dim = 1, first = first, last = last)
-            b = consumer.recv(id_b, cuda = True, slice_dim = 0, first = first, last = last)
+        w = consumer.recv(id_w, cuda = True)
+        if w is None:
+            w_ = []
+            b_ = []
+            in_features = 0
+            out_features = 0
+
+            for split in splits:
+                assert split is not None
+                split_out, first, last = split
+                assert split_out
+                w = consumer.recv(id_w, cuda = True, slice_dim = 1, first = first, last = last)
+                b = consumer.recv(id_b, cuda = True, slice_dim = 0, first = first, last = last)
+                in_features = exported["in_features"]
+                out_features += last - first
+                w_.append(w)
+                b_.append(b)
+
+            w = torch.cat(w_, dim = 1)
+            b = torch.cat(b_, dim = 0) if b_[0] is not None else None
+
+            w = consumer.recv(id_w, cuda = True, cache_tensor = w)
+            if b is not None:
+                b = consumer.recv(id_b, cuda = True, cache_tensor = b)
+        else:
+            b = consumer.recv(id_b, cuda = True)
             in_features = exported["in_features"]
-            out_features += last - first
-            w_.append(w)
-            b_.append(b)
-
-        w = torch.cat(w_, dim = 1)
-        b = torch.cat(b_, dim = 0) if b_[0] is not None else None
+            out_features = sum(last - first for _, first, last in splits)
 
         module = LinearFP16(
             in_features = in_features,

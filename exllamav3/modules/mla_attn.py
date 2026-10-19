@@ -1305,7 +1305,7 @@ class MLAttention(Module):
             },
             "num_q_heads": self.num_q_heads,
             **{name: _export(getattr(self, name)) for name in names},
-            **{name: (producer.send(t) if (t := getattr(self, name)) is not None else None)
+            **{name: (producer.send(self.get_tensor_key(name), t) if (t := getattr(self, name)) is not None else None)
                for name in self._tp_tensors},
             "cache_layers": [cl.tp_export(plan) for cl in self.cache_layers],
             "device": self.device,

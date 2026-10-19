@@ -365,7 +365,7 @@ def new_checkpoint_handle() -> int:
 def mp_cache_recurrent_clear(local_context: dict, cache_id: int, slot: int):
     recurrent_modules = local_context["recurrent_modules"]
     for module in recurrent_modules:
-        recurrent_layer = module.tp_recurrent_lookup[cache_id]
+        recurrent_layer = module.tp_recurrent_lookup[cache_id]        
         recurrent_layer.clear(slot)
 
 

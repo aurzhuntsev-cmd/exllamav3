@@ -121,7 +121,7 @@ class DFlashInputLayer(Module):
         if not self.attached_model().loaded_tp:
             x = self.attached_model().modules[0].forward(x, params)
         else:
-            x = self.attached_model().tp_producer.send(x)
+            x = self.attached_model().tp_producer.send(None, x)
             x = self.attached_model().tp_dispatch_master(mp_model_forward_embedding, (x, params))
         if self.input_embedding_scale != 1.0:
             x = x * self.input_embedding_scale

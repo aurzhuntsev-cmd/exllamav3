@@ -55,6 +55,9 @@ class Module(ABC):
         for module in self.modules:
             yield from module
 
+    def get_tensor_key(self, key: str) -> str:
+        return f"{self.key}.{key}"
+
     def find_module(self, key: str):
         for module in self:
             if module.key == key:

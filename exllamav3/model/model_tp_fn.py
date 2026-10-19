@@ -10,6 +10,7 @@ from functools import lru_cache
 from .model_tp_backend import TPBackendNCCL, TPBackendNative, TPBackendNull
 from ..tokenizer.mm_embedding import recv_embeddings
 from ..util import log_tp, set_t0
+from .model_tp_cache import TPCacheManager, TPCacheManagerMode
 
 _no_fwd_barrier = os.environ.get("EXL3_TP_NO_FWD_BARRIER", "1") != "0"
 _stream_hash_passes = int(os.environ.get("EXL3_TP_STREAM_HASH", "0") or "0")
@@ -167,6 +168,11 @@ def mp_model_append(local_context: dict, exported: dict):
     plan = local_context["plan"]
 
     module = cls.tp_import(local_context, exported, plan[device])
+    
+    cache_ids = local_context.get("tp_cache_ids")
+    if cache_ids:
+        _rekey_cache_lookups(module, cache_ids)
+
     modules.append(module)
     # Gated-residual sites hand a weighted stream copy to their successor; rewire on each append
     from ..modules.hyperconnections import GatedResidual
@@ -595,7 +601,61 @@ def mp_cpu_cache_fetch(local_context: dict, cache_ids: list[int], slot: int, pag
         tensor[page_index].copy_(buffer, non_blocking = True)
     pool.note_copies(slot)
 
+def mp_tp_cache_set_capture(local_context: dict, directory: str):
+    """
+    Instantiate GpuCacheManager singleton and set it into capturing mode
+    """    
+    TPCacheManager(directory).set_mode(TPCacheManagerMode.CAPTURING)
 
+def mp_tp_cache_set_serve(local_context: dict, directory: str, cache_ids: list[int]):
+    """
+    Instantiate GpuCacheManager singleton, set it into serving mode and load gpu cache
+    Also store cache ids to re-key later
+    """
+    tpcm = TPCacheManager(directory)
+    tpcm.set_mode(TPCacheManagerMode.SERVING)
+    tpcm.init(local_context["device"])
+
+    local_context["tp_cache_ids"] = cache_ids
+
+def mp_tp_cache_set_disable(local_context: dict):
+    """
+    Set GpuCacheManager singleton in disabled mode
+    """    
+    TPCacheManager(None).set_mode(TPCacheManagerMode.DISABLED)    
+
+def mp_tp_cache_get_device_modules(local_context: dict):
+    """
+    Get modules keys that reside on a GPU device
+    """
+    modules = []
+    for module in local_context["modules"]:
+        if getattr(module.device, "type", None) != "cpu":
+            modules.append(module.key)
+            
+    return modules
+
+def _rekey_cache_lookups(module, cache_ids):
+    """
+    Re-key each module's cache lookup tables from the capture session's stale id(Cache)
+    keys to this session's cache_ids, positionally (a module holds one entry per cache in
+    creation order)
+    """
+    from ..modules import Module
+    def walk(m):
+        yield m
+        for v in vars(m).values():
+            if isinstance(v, Module):
+                yield from walk(v)
+    for m in walk(module):
+        for attr in ("tp_cache_lookup", "tp_recurrent_lookup"):
+            table = getattr(m, attr, None)
+            if table:
+                items = list(table.items())
+                table.clear()
+                table.update((cache_ids[i] if i < len(cache_ids) else k, v)
+                              for i, (k, v) in enumerate(items))
+                
 # -- Disk tier (generator/disk_cache.py), rank side --------------------------------------------------------------
 #
 # A page on disk is one image in the canonical layout: every cache tensor's page slice with all kv heads in model

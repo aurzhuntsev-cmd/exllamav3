@@ -3,6 +3,9 @@
 #include <ATen/cuda/CUDAContext.h>
 #include "util.h"
 
+#include <fcntl.h>
+#include <unistd.h>
+
 // The runtime records a failed call's error as the last error as well. Errors these functions report (or deliberately
 // ignore) must be consumed, or the next cudaGetLastError() elsewhere (torch's launch checks) attributes them to
 // something unrelated
@@ -109,4 +112,89 @@ at::Tensor pinned_cuda_view(const at::Tensor& t, int64_t device)
     );
     auto options = t.options().device(at::kCUDA, static_cast<c10::DeviceIndex>(device));
     return at::from_blob(dev_ptr, t.sizes(), t.strides(), [](void*) {}, options);
+}
+
+ssize_t cuda_load_file_direct(uintptr_t dst_gpu_addr,
+                              const char* path,
+                              size_t      file_size)
+{
+    constexpr size_t CHUNK = 64ull * 1024 * 1024;  
+    constexpr int    NBUFS = 4;                    
+    constexpr size_t BLKSZ = 4096;                 
+
+    if (file_size == 0) return 0;
+
+    int fd = open(path, O_RDONLY | O_DIRECT);
+    if (fd < 0) return -1;
+
+    void* host[NBUFS]   = {};
+    cudaStream_t stream[NBUFS] = {};
+
+    for (int i = 0; i < NBUFS; ++i) {
+        if (cudaHostAlloc(&host[i], CHUNK, cudaHostAllocDefault) != cudaSuccess) {
+            for (int j = 0; j < i; ++j)
+                cudaFreeHost(host[j]);
+    
+                close(fd);
+            return -1;
+        }
+    
+        cudaStreamCreateWithFlags(&stream[i], cudaStreamNonBlocking);
+    }
+
+    char* dst = reinterpret_cast<char*>(dst_gpu_addr);
+    size_t offset = 0;
+    int i = 0;
+    int rc = 0;
+
+    while (offset < file_size) {
+        int slot = i % NBUFS;
+        size_t remaining = file_size - offset;
+        size_t want = (remaining >= CHUNK)
+                      ? CHUNK
+                      : ((remaining + BLKSZ - 1) & ~(BLKSZ - 1));
+
+        cudaStreamSynchronize(stream[slot]);
+
+        ssize_t n = pread(fd, host[slot], want, static_cast<off_t>(offset));        
+        if (n < 0) {
+             rc = -1;
+              break;
+        }
+
+        if (n == 0) {
+            rc = -1;
+             break;
+        }                       
+
+        if ((size_t)n < want && offset + (size_t)n < file_size) {
+            rc = -1;
+            break;                                    
+        }
+
+        size_t push = (static_cast<size_t>(n) < remaining)
+                    ? static_cast<size_t>(n)
+                    : remaining;
+
+        if (cudaSuccess != cudaMemcpyAsync(dst + offset, host[slot], push,
+                        cudaMemcpyHostToDevice, stream[slot])) {
+            rc = -1;
+            break;
+        }                             
+
+        offset += push;   
+        ++i;
+    }
+
+    for (int s = 0; s < NBUFS; ++s)
+        cudaStreamSynchronize(stream[s]);
+
+    for (int s = 0; s < NBUFS; ++s) {
+        cudaStreamDestroy(stream[s]);
+        cudaFreeHost(host[s]);
+    }
+
+    close(fd);
+
+    return (rc == 0) ? static_cast<ssize_t>(offset) : -1;
 }

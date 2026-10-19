@@ -1095,8 +1095,9 @@ class Attention(Module):
         cache = params.get("cache")
         # In TP child processes the cache param arrives as an opaque id; resolve it to the local split
         # CacheLayer before anything (like the BC-attn graph path) inspects it
-        if self.has_split_cache:
-            cache = self.tp_cache_lookup[cache]
+        if self.has_split_cache:            
+            cache = self.tp_cache_lookup[cache]        
+            
         block_table = get_for_device(params, "block_table", self.device)
         cache_seqlens = get_for_device(params, "cache_seqlens", self.device)
         position = params.get("position", 0)
@@ -1326,7 +1327,7 @@ class Attention(Module):
             # QSA indexer (Qwen3.8): replicated whole on the owning rank
             "qsa_indexer": _export(self.qsa_indexer),
             # Learned attention sinks (gpt-oss): one logit per query head, sliced to the local heads on import
-            "sinks": producer.send(self.sinks) if self.sinks is not None else None,
+            "sinks": producer.send(self.get_tensor_key("sinks"), self.sinks) if self.sinks is not None else None,
             "device": self.device,
             "cache_layers": [
                 cl.tp_export(plan) for cl in self.cache_layers

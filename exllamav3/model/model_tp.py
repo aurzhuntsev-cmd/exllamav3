@@ -15,6 +15,7 @@ from .model_tp_fn import *
 import uuid
 from ..util import log_tp, global_t0
 from ..tokenizer.mm_embedding import send_embeddings
+from .model_tp_cache import TPCacheManager, TPCacheManagerMode
 
 cleanupper = Cleanupper()
 DISPATCH_TIMEOUT = 20
@@ -501,7 +502,7 @@ class Model_TPMixin:
         tp_backend: str,
         verbose: bool,
         tp_options: dict,
-    ):
+    ):    
         assert use_per_device is None or reserve_per_device is None
         if dev_limits is None: dev_limits = {}
 
@@ -569,7 +570,27 @@ class Model_TPMixin:
             [(producer.export(),) if d != tp_output_device else (producer,) for d in active_devices]
         )
 
+        tpcm = None
+        if TPCacheManager.enabled():
+            tpcm = TPCacheManager(config.directory)
+            if tpcm.valid(self.plan, self.active_devices):
+                tpcm.set_mode(TPCacheManagerMode.SERVING)
+                self.tp_worker_dispatch_wait_multi(
+                    self.active_devices,
+                    mp_tp_cache_set_serve,
+                    (config.directory,list(self.cache_weakrefs.keys()))
+                )    
+            else:
+                tpcm.set_mode(TPCacheManagerMode.CAPTURING)                
+                self.tp_worker_dispatch_wait_multi(
+                    self.active_devices,
+                    mp_tp_cache_set_capture,
+                    (config.directory,)
+                )
+
         # Begin loading modules
+
+        exported_modules = {}
         with (ProgressBar(f"Loading (TP)" if progressbar else None, len(modules)) as progress):
             for idx, module in enumerate(modules):
                 last_module = module
@@ -577,16 +598,23 @@ class Model_TPMixin:
                 if callback_sync: callback_sync(idx, len(modules))
                 if generator: yield idx, len(modules)
 
-                # Load module to CPU
-                defer = module.can_defer_load()
-                if defer:
-                    config.stc.begin_deferred_load()
-                module.load(torch.device("cpu"))
-                if defer:
-                    config.stc.end_deferred_load()
+                tp_cache_module = tpcm.get_module(module.key) if tpcm is not None else None
+                if tp_cache_module is not None:
+                    exported = tp_cache_module
+                else:
+                    # Load module to CPU
+                    defer = module.can_defer_load()
+                    if defer:
+                        config.stc.begin_deferred_load()
+                    module.load(torch.device("cpu"))
+                    if defer:
+                        config.stc.end_deferred_load()
 
-                # Do module-specific device/process split
-                exported = module.tp_export(self.plan, producer)
+                    # Do module-specific device/process split
+                    exported = module.tp_export(self.plan, producer)                    
+                    exported_modules[module.key] = exported
+
+
                 self.tp_worker_dispatch_wait_multi(self.active_devices, mp_model_append, (exported,))
                 producer.clear()
 
@@ -607,6 +635,14 @@ class Model_TPMixin:
         # Distribution pipeline
         self.tp_worker_dispatch_wait_multi(self.active_devices, mp_close_consumer, ())
         producer.close()
+
+        if tpcm is not None:
+            gpu_modules = self.tp_worker_dispatch_wait_multi(self.active_devices, mp_tp_cache_get_device_modules, ())
+            gpu_modules_flat = [item for sublist in gpu_modules for item in sublist]                        
+            exported_modules = {key: value for key, value in exported_modules.items() if key in gpu_modules_flat}
+                        
+            tpcm.finalize(active_devices, exported_modules, self.plan)            
+            self.tp_worker_dispatch_wait_multi(self.active_devices, mp_tp_cache_set_disable, ())
 
         config.stc.close()
         self.loaded_tp = True
@@ -647,7 +683,7 @@ class Model_TPMixin:
         ]:
             p = params.get(tensor_param)
             if p is not None:
-                params[tensor_param] = self.tp_producer.send(p)
+                params[tensor_param] = self.tp_producer.send(None, p)
 
         p = params.get("indexed_embeddings")
         if p is not None:
@@ -658,7 +694,7 @@ class Model_TPMixin:
             reserve["recurrent_states"] = params["recurrent_states"]
             params["recurrent_states"] = [(rs.tp_export() if rs is not None else None) for rs in p]
 
-        return self.tp_producer.send(x), reserve
+        return self.tp_producer.send(None, x), reserve
 
 
     def restore_tp_params(self, params: dict, reserve: dict):
@@ -748,7 +784,7 @@ class Model_TPMixin:
 
 
     def tp_rotate_cache_pages(self, cache_id: int, all_rotations: torch.Tensor):
-        all_rotations = self.tp_producer.send(all_rotations)
+        all_rotations = self.tp_producer.send(None, all_rotations)
         self.tp_worker_dispatch_wait_multi(self.active_devices, mp_rotate_cache_pages, (
             cache_id,
             all_rotations

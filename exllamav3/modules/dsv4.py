@@ -313,7 +313,7 @@ class DSV4Compressor:
             "wkv": self.wkv.tp_export(plan, producer),
             "wgate": self.wgate.tp_export(plan, producer),
             "norm": self.norm.tp_export(plan, producer),
-            "ape": producer.send(self.ape),
+            "ape": producer.send(self.get_tensor_key("ape"), self.ape),
         }
 
 
@@ -782,7 +782,7 @@ class DSV4Attention(Module):
                 "idx_weights",
             )},
             "wo_a": [l.tp_export(plan, producer) for l in self.wo_a],
-            "sinks": producer.send(self.sinks),
+            "sinks": producer.send(self.get_tensor_key("sinks"), self.sinks),
             "compressor": self.compressor.tp_export(plan, producer) if self.compressor is not None else None,
             "indexer": self.indexer.tp_export(plan, producer) if self.indexer is not None else None,
             "recurrent_layers": [rl.tp_export(plan) for rl in self.recurrent_layers],

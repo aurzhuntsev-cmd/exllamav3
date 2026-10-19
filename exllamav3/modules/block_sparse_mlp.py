@@ -1590,14 +1590,14 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
             },
             # Hash-MoE bootstrap layers (DeepSeek-V4): frozen token->experts table, needed
             # wherever routing runs (the output device, like the routing gate)
-            "tid2eid": producer.send(self.tid2eid) if self.tid2eid is not None else None,
+            "tid2eid": producer.send(self.get_tensor_key("tid2eid"), self.tid2eid) if self.tid2eid is not None else None,
             "routing_gate": _export(self.routing_gate),
             "shared_gate": _export(self.shared_gate),
             "latent_in": _export(self.latent_in),
             "latent_out": _export(self.latent_out),
-            "e_score_correction_bias": producer.send(self.e_score_correction_bias),
-            "e_score_bias_vl": producer.send(self.e_score_bias_vl) if self.e_score_bias_vl is not None else None,
-            "per_expert_scale": producer.send(self.per_expert_scale),
+            "e_score_correction_bias": producer.send(self.get_tensor_key("e_score_correction_bias"), self.e_score_correction_bias),
+            "e_score_bias_vl": producer.send(self.get_tensor_key("e_score_bias_vl"), self.e_score_bias_vl) if self.e_score_bias_vl is not None else None,
+            "per_expert_scale": producer.send(self.get_tensor_key("per_expert_scale"), self.per_expert_scale),
             "gates": [_export(self.gates[i]) for i in range(self.num_experts)] if self.gated else None,
             "ups": [_export(self.ups[i]) for i in range(self.num_experts)],
             "downs": [_export(self.downs[i]) for i in range(self.num_experts)],

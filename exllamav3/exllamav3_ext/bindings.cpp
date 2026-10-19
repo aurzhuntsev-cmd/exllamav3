@@ -105,6 +105,14 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     m.def("cuda_memcpy_async", &cuda_memcpy_async, py::arg("dst"), py::arg("src"), py::arg("nbytes"), py::arg("kind"));
     m.def("cuda_device_get_attribute", &cuda_device_get_attribute, py::arg("attr"), py::arg("device"));
     m.def("pinned_cuda_view", &pinned_cuda_view, py::arg("t"), py::arg("device"));
+    m.def("cuda_load_file_direct",
+          [](uintptr_t addr, const std::string& path, size_t size) -> ssize_t {
+              py::gil_scoped_release nogil;
+              return cuda_load_file_direct(addr, path.c_str(), size);
+          },
+          py::arg("dst_gpu_addr"),
+          py::arg("path"),
+          py::arg("file_size"));
 
     m.def("rms_norm", &rms_norm, "rms_norm",
         py::arg("x"), py::arg("w"), py::arg("y"), py::arg("epsilon"),

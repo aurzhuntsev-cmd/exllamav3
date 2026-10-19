@@ -1544,12 +1544,12 @@ class GatedDeltaNet(Module):
     def tp_export(self, plan, producer):
         assert self.device is not None, "Cannot export module for TP before loading."
 
-        def _export(child):
+        def _export(key, child):
             nonlocal producer
             if child is None:
                 return None
             if isinstance(child, torch.Tensor):
-                return TPTensorWrapper.tp_export(child, plan, producer)
+                return TPTensorWrapper.tp_export(key, child, plan, producer)
             else:
                 return child.tp_export(plan, producer)
 
@@ -1575,7 +1575,7 @@ class GatedDeltaNet(Module):
             "num_k_heads": self.num_k_heads,
             "num_v_heads": self.num_v_heads,
             "num_kv_group": self.num_v_heads // self.num_k_heads,
-            **{name: _export(getattr(self, name, None)) for name in (
+            **{name: _export(self.get_tensor_key(name), getattr(self, name, None)) for name in (
                 "qkv_proj",
                 "z_proj",
                 "b_proj",
