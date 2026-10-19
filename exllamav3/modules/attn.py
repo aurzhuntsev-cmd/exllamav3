@@ -1096,12 +1096,8 @@ class Attention(Module):
         # In TP child processes the cache param arrives as an opaque id; resolve it to the local split
         # CacheLayer before anything (like the BC-attn graph path) inspects it
         if self.has_split_cache:            
-            cache = self.tp_cache_lookup.get(cache)
-        if cache is None and len(self.tp_cache_lookup) == 1:
-            cache = next(iter(self.tp_cache_lookup.values()))
-        if cache is None:
-            raise KeyError("Cache id not found in the lookup")
-
+            cache = self.tp_cache_lookup[cache]        
+            
         block_table = get_for_device(params, "block_table", self.device)
         cache_seqlens = get_for_device(params, "cache_seqlens", self.device)
         position = params.get("position", 0)

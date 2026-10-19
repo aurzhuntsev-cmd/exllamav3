@@ -5,7 +5,7 @@ from multiprocessing import shared_memory
 import uuid
 from .model_tp_cuda import cuda_host_register, cuda_host_unregister, CUDA_HOST_REGISTER_PORTABLE
 from ..util.shm import check_shm_capacity
-from .model_tp_gpu_cache import GpuCacheManager, GpuCacheManagerMode
+from .model_tp_gpu_cache import TPCacheManager, TPCacheManagerMode
 
 DEFAULT_BUFFER_SIZE = 2 * 1024 ** 3
 MAX_CACHE_PER_PROCESS = 4 * 1024**3
@@ -181,9 +181,9 @@ class SMConsumer:
         self.device = device
         torch.cuda.set_device(self.device)
 
-        self.gpu_cache_manager = None
-        if GpuCacheManager.enabled():
-            self.gpu_cache_manager = GpuCacheManager(None)
+        self.tpcm = None
+        if TPCacheManager.enabled():
+            self.tpcm = TPCacheManager(None)
 
         def get_local_tensor(shm_buf, _buffer_size):
             # Create local uint8 tensor mapping the entire shared buffer
@@ -269,15 +269,15 @@ class SMConsumer:
 
         if cuda and method == "buffer" and slice_dim is None:
             if cache_tensor is not None:
-                if self.gpu_cache_manager is not None and self.device >= 0:
-                    self.gpu_cache_manager.capture(self.device, imp["key"], cache_tensor)
+                if self.tpcm is not None and self.device >= 0:
+                    self.tpcm.capture(self.device, imp["key"], cache_tensor)
                 return cache_tensor
             if imp.get("gpu_cache_split"):
-                return self.gpu_cache_manager.get_tensor(self.device, imp["key"]) if self.gpu_cache_manager is not None else None
+                return self.tpcm.get_tensor(self.device, imp["key"]) if self.tpcm is not None else None
 
-        if self.gpu_cache_manager != None and cuda and method == "buffer":
+        if self.tpcm != None and cuda and method == "buffer":
             cache_key = f"{imp['key']}_{first}_{last}" if slice_dim is not None else imp["key"]
-            tensor = self.gpu_cache_manager.get_tensor(self.device, cache_key)
+            tensor = self.tpcm.get_tensor(self.device, cache_key)
             if tensor is not None: 
                 return tensor 
                    
@@ -312,9 +312,9 @@ class SMConsumer:
         elif imp["method"] != "share_memory" or not tensor.is_contiguous():
             tensor = tensor.clone(memory_format = torch.contiguous_format)
 
-        if self.gpu_cache_manager != None and cuda and method == "buffer" and not imp.get("gpu_cache_split"):
+        if self.tpcm != None and cuda and method == "buffer" and not imp.get("gpu_cache_split"):
             cache_key = f"{imp['key']}_{first}_{last}" if slice_dim is not None else imp["key"]
-            self.gpu_cache_manager.capture(self.device, cache_key, tensor) if self.device >= 0 else None
+            self.tpcm.capture(self.device, cache_key, tensor) if self.device >= 0 else None
 
         return tensor
 

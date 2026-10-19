@@ -15,7 +15,7 @@ from .model_tp_fn import *
 import uuid
 from ..util import log_tp, global_t0
 from ..tokenizer.mm_embedding import send_embeddings
-from .model_tp_gpu_cache import GpuCacheManager, GpuCacheManagerMode
+from .model_tp_gpu_cache import TPCacheManager, TPCacheManagerMode
 
 cleanupper = Cleanupper()
 DISPATCH_TIMEOUT = 20
@@ -571,16 +571,24 @@ class Model_TPMixin:
         )
 
         start_time = time.perf_counter()
-        
+    
         gpu_cache_manager = None
-        if GpuCacheManager.enabled():
-            gpu_cache_manager = GpuCacheManager(config.directory)
+        if TPCacheManager.enabled():
+            gpu_cache_manager = TPCacheManager(config.directory)
             if gpu_cache_manager.valid(self.plan):
-                gpu_cache_manager.set_mode(GpuCacheManagerMode.SERVING)
-                self.tp_worker_dispatch_wait_multi(self.active_devices, mp_gpu_cache_set_serve, (config.directory,))    
+                gpu_cache_manager.set_mode(TPCacheManagerMode.SERVING)
+                self.tp_worker_dispatch_wait_multi(
+                    self.active_devices,
+                    mp_gpu_cache_set_serve,
+                    (config.directory,list(self.cache_weakrefs.keys()))
+                )    
             else:
-                gpu_cache_manager.set_mode(GpuCacheManagerMode.CAPTURING)                
-                self.tp_worker_dispatch_wait_multi(self.active_devices, mp_gpu_cache_set_capture, (config.directory,))
+                gpu_cache_manager.set_mode(TPCacheManagerMode.CAPTURING)                
+                self.tp_worker_dispatch_wait_multi(
+                    self.active_devices,
+                    mp_gpu_cache_set_capture,
+                    (config.directory,)
+                )
 
         end_time = time.perf_counter()
         execution_time = end_time - start_time        
@@ -638,8 +646,8 @@ class Model_TPMixin:
             gpu_modules = self.tp_worker_dispatch_wait_multi(self.active_devices, mp_gpu_cache_get_device_modules, ())
             gpu_modules_flat = [item for sublist in gpu_modules for item in sublist]                        
             exported_modules = {key: value for key, value in exported_modules.items() if key in gpu_modules_flat}
-            
-            gpu_cache_manager.finalize(active_devices, exported_modules)
+                        
+            gpu_cache_manager.finalize(active_devices, exported_modules, self.plan)            
             self.tp_worker_dispatch_wait_multi(self.active_devices, mp_gpu_cache_set_disable, ())
 
         config.stc.close()

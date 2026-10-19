@@ -87,14 +87,7 @@ def _rewind_layers(layers, slot: int, last_history: int, num_tokens: int,
 def mp_cache_recurrent_rewind(local_context: dict, cache_id: int, slot: int, last_history, num_tokens,
                               spec_row, spec_shape, base_row, scratch_row):
     recurrent_modules = local_context["recurrent_modules"]
-    layers = [
-        module.tp_recurrent_lookup[cache_id]
-        if cache_id in module.tp_recurrent_lookup
-        else next(iter(module.tp_recurrent_lookup.values()))
-        if len(module.tp_recurrent_lookup) == 1
-        else module.tp_recurrent_lookup[cache_id]   # raises KeyError
-        for module in recurrent_modules
-    ]
+    layers = [module.tp_recurrent_lookup[cache_id] for module in recurrent_modules]
     _rewind_layers(layers, slot, last_history, num_tokens, spec_row, spec_shape, base_row, scratch_row)
 
 
@@ -103,12 +96,7 @@ def mp_cache_recurrent_stash_gdn(local_context: dict, cache_id: int, cp_handle: 
     recurrent_cache = local_context["recurrent_cache"]
     stashed = []
     for module in recurrent_modules:
-        l = module.tp_recurrent_lookup.get(cache_id)
-        if l is None and len(module.tp_recurrent_lookup) == 1:
-            l = next(iter(module.tp_recurrent_lookup.values()))
-        if l is None:
-            raise KeyError
-
+        l = module.tp_recurrent_lookup[cache_id]
         stashed.append(l.stash(slot, position, parity) if isinstance(l, GDNLayerState) else l.stash(slot, position))
     recurrent_cache[cp_handle] = stashed
 
@@ -118,12 +106,7 @@ def mp_cache_recurrent_unstash_gdn(local_context: dict, cache_id: int, cp_handle
     recurrent_cache = local_context["recurrent_cache"]
     stashed = recurrent_cache[cp_handle]
     for module, st in zip(recurrent_modules, stashed):
-        l = module.tp_recurrent_lookup.get(cache_id)
-        if l is None and len(module.tp_recurrent_lookup) == 1:
-            l = next(iter(module.tp_recurrent_lookup.values()))
-        if l is None:
-            raise KeyError
-        
+        l = module.tp_recurrent_lookup[cache_id]
         if isinstance(l, GDNLayerState):
             l.unstash(slot, st, position, parity)
         else:
@@ -1273,11 +1256,7 @@ class GatedDeltaNet(Module):
             slots_scan_in = get_for_device(params, "recurrent_slots_scan_in", self.device) if scan_history else None
             layer_instance = (self.layer_idx, params.get("layer_instance", 0))
             if rsg[0].exported:
-                rsl = self.tp_recurrent_lookup.get(rsg[0].cache)
-                if rsl is None and len(self.tp_recurrent_lookup) == 1:
-                    rsl =  next(iter(self.tp_recurrent_lookup.values()))
-                if rsl is None:
-                    raise KeyError("Cache id not found in the lookup.")
+                rsl = self.tp_recurrent_lookup[rsg[0].cache]
             else:
                 rsl = rsg[0].cache.get_recurrent_layer(layer_instance)
             conv_state, recurrent_state = rsl.get_state_tensors()

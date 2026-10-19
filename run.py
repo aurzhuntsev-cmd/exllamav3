@@ -1,8 +1,8 @@
 from exllamav3 import Config, Model, Cache, CacheLayer_quant, Tokenizer, Generator
 
 #model_dir = "/home/andrey/models/test"
-#model_dir = "/mnt/models/qwen3.8-27b"
-model_dir = "/home/andrey/models/test2"
+model_dir = "/mnt/models/qwen3.8-27b"
+#model_dir = "/home/andrey/models/test2"
 #model_dir = "/mnt/models/qwen3.6-35b"
 prompt    = "What is the capital of France?"
 

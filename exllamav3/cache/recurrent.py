@@ -365,12 +365,7 @@ def new_checkpoint_handle() -> int:
 def mp_cache_recurrent_clear(local_context: dict, cache_id: int, slot: int):
     recurrent_modules = local_context["recurrent_modules"]
     for module in recurrent_modules:
-        recurrent_layer = module.tp_recurrent_lookup.get(cache_id)
-        if recurrent_layer is None and len(module.tp_recurrent_lookup) == 1:
-            recurrent_layer = next(iter(module.tp_recurrent_lookup.values()))
-        if recurrent_layer is None:
-            raise KeyError("Cache id not found in the lookup.")
-
+        recurrent_layer = module.tp_recurrent_lookup[cache_id]        
         recurrent_layer.clear(slot)
 
 

@@ -1,29 +1,27 @@
-import os
+import os, json, pickle, mmap, time, torch, hashlib, struct
 from enum import Enum
-import torch
 from pathlib import Path
-import json, pickle
-import mmap
-import time
 from .model_tp_cuda import cuda_load_file_direct
-import numpy as np
 
-GPU_CACHE_ENV_VAR                   = "EXL3_TP_CACHE_ENABLE"
-GPU_CACHE_BASE_PATH                 = ".tensorsplit"
-GPU_CACHE_CUDA_ALIGN_SECTOR_SIZE    = 32
-CPU_CACHE_LOAD_CHUNK_SIZE           = 64 * 1024 * 1024
+TP_CACHE_ENV_VAR                   = "EXL3_TP_CACHE_ENABLE"
+TP_CACHE_BASE_PATH                 = ".tensorsplit"
+TP_CACHE_MAGIC                     = "TPC "
+TP_CACHE_FOOTER_SIZE               = 4 + 16 # magic + 16-byte md5 hash
 
-class GpuCacheManagerMode(Enum):
+CUDA_BLOCK_SIZE                    = 32
+CACHE_LOAD_CHUNK_SIZE              = 64 * 1024 * 1024
+
+class TPCacheManagerMode(Enum):
     DISABLED = 0
     CAPTURING = 1
     SERVING = 2    
 
-class GpuCacheManager:
+class TPCacheManager:
     _instance = None
 
     @staticmethod
     def enabled() -> bool:
-        return os.environ.get(GPU_CACHE_ENV_VAR) == "1"    
+        return os.environ.get(TP_CACHE_ENV_VAR) == "1"    
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
@@ -31,8 +29,7 @@ class GpuCacheManager:
     
             cls._instance._initialized = False
             cls._instance._tensors = {}            
-            cls._instance._mode = GpuCacheManagerMode.DISABLED                        
-    
+            cls._instance._mode = TPCacheManagerMode.DISABLED                            
         return cls._instance
 
     def __init__(self, directory = None):
@@ -40,7 +37,7 @@ class GpuCacheManager:
             return
 
         self.directory = directory
-        self.base_path = os.path.join(self.directory, GPU_CACHE_BASE_PATH)
+        self.base_path = os.path.join(self.directory, TP_CACHE_BASE_PATH)
         self.manifest_path = os.path.join(self.base_path, "manifest.json")
         self.modules_path = os.path.join(self.base_path, "modules.pkl")     
 
@@ -56,17 +53,17 @@ class GpuCacheManager:
 
     def _write_aligned(self, file, data, length: int) -> int:
         offset = file.tell()
-        pad = (GPU_CACHE_CUDA_ALIGN_SECTOR_SIZE - 
-                (length % GPU_CACHE_CUDA_ALIGN_SECTOR_SIZE)) % GPU_CACHE_CUDA_ALIGN_SECTOR_SIZE
+        pad = (CUDA_BLOCK_SIZE - 
+                (length % CUDA_BLOCK_SIZE)) % CUDA_BLOCK_SIZE
             
         file.write(data)
         file.write(b'\x00' * pad)
         return offset
     
-    def set_mode(self, mode: GpuCacheManagerMode):                
+    def set_mode(self, mode: TPCacheManagerMode):                
         self._mode = mode
 
-        if mode == GpuCacheManagerMode.CAPTURING:
+        if mode == TPCacheManagerMode.CAPTURING:
             if os.path.exists(self.base_path):
                 folder = Path(self.base_path)                        
                 for file in folder.iterdir():
@@ -83,17 +80,32 @@ class GpuCacheManager:
         if not os.path.exists(self.manifest_path) or not os.path.exists(self.modules_path):
             return False
 
-        # 3. Check if device dumps exist:
-        for device, subplan in enumerate(plan):
-            if not os.path.exists(self._get_tensor_dump_path(device)):
-                return False
+        # 3. Validate plan hash
+        plan_hash = hashlib.md5(json.dumps(plan).encode())
+        with open(self.manifest_path) as f:
+            manifest = json.load(f)
+            if manifest["plan"] != plan_hash.hexdigest():
+                print(f"Cache does not match current split plan, will invalidate.")
+                return False            
 
-        # 4. TODO: Validate actual plan
+        # 4. Check if device dumps exist and have proper footer:
+        for device, subplan in enumerate(plan):
+            path = self._get_tensor_dump_path(device)
+            if not os.path.exists(path):
+                return False        
+
+            with open(path, "rb") as f:
+                f.seek(os.path.getsize(path) - TP_CACHE_FOOTER_SIZE)
+                footer = f.read(TP_CACHE_FOOTER_SIZE)
+                if footer[:len(TP_CACHE_MAGIC)] != TP_CACHE_MAGIC.encode('ascii') or \
+                   footer[len(TP_CACHE_MAGIC):TP_CACHE_FOOTER_SIZE] != plan_hash.digest():
+                    print(f"Cache dump file is corrupt on mismatches manifest, will invaliidate.")
+                    return False
 
         return True
 
     def capture(self, device: int, key: str, tensor: torch.Tensor):
-        if self._mode != GpuCacheManagerMode.CAPTURING:
+        if self._mode != TPCacheManagerMode.CAPTURING:
             return        
 
         if key is None:
@@ -107,7 +119,7 @@ class GpuCacheManager:
         with open(dump_path, "ab") as f_dump:
             offset = self._write_aligned(f_dump, data, tensor.nbytes)
 
-        tensor_manifest = {
+        tensor = {
             "key": key,
             "offset": str(offset),
             "nbytes": str(tensor.nbytes),
@@ -117,63 +129,86 @@ class GpuCacheManager:
 
         list_path = self._get_tensor_list_path(device)
         with open(list_path, "a") as f_list:
-            f_list.write(json.dumps(tensor_manifest))
+            f_list.write(json.dumps(tensor))
             f_list.write("\n")   
 
-    def finalize(self, active_devices: list, exported_modules: dict):
-        if self._mode != GpuCacheManagerMode.CAPTURING:
+    def finalize(self, active_devices: list, exported_modules: dict, plan: list):
+        if self._mode != TPCacheManagerMode.CAPTURING:
             return
 
-        tensor_manifest = {}
+        tensors = {}    
 
-        # 1. Combine tensor lists into a manifest and move unique tensors
+        # 1. Combine tensor lists into a manifest and move unique tensors        
+        plan_hash = hashlib.md5(json.dumps(plan).encode())
+
         for device in active_devices:
-            tensor_manifest[device] = {}
+            tensors[device] = {}
 
             list_path = self._get_tensor_list_path(device)
             with open(list_path, "r") as f_list:
-                tensor_list = f_list.readlines()
+                tensors_list = f_list.readlines()
 
             source_path = self._get_tensor_dump_path(device, temp=True)
             dest_path = self._get_tensor_dump_path(device, temp=False)
+
+            def actual_size(nbytes: int):
+                return ((nbytes + CUDA_BLOCK_SIZE - 1)
+                    // CUDA_BLOCK_SIZE) * CUDA_BLOCK_SIZE
             
-            with open(source_path, "rb") as f_src:
-                with open(dest_path, "wb") as f_dst:
-                    for tensor in tensor_list:
-                        tensor = json.loads(tensor)
-                        key = tensor.pop("key")
+            for tensor in tensors_list:
+                tensor = json.loads(tensor)
+                key = tensor.pop("key")
 
-                        if key not in tensor_manifest[device]:                                                        
-                            offset = int(tensor["offset"])
-                            nbytes = int(tensor["nbytes"])                                 
+                if key not in tensors[device]:                                                        
+                    tensors[device][key] = tensor                                
 
-                            f_src.seek(offset, 0)
-                            data = f_src.read(nbytes)
+            with open(source_path, "a+b") as f:
+                total_size = 0
+                with mmap.mmap(f.fileno(), length=os.path.getsize(source_path), access=mmap.ACCESS_WRITE) as dst:
+                    with memoryview(dst) as src:
+                        dst_offset = 0                    
+                        for tensor in sorted(tensors[device].values(), key=lambda x: int(x["offset"])):                        
+                            src_offset = int(tensor["offset"])                 
+                            
+                            size = actual_size(int(tensor["nbytes"]))
+                            total_size += size
+                            
+                            if src_offset != dst_offset:
+                                tensor["offset"] = str(dst_offset)                        
+                                data = src[src_offset:src_offset + size].tobytes()
+                                
+                                dst.seek(dst_offset)
+                                dst.write(data)
 
-                            offset = self._write_aligned(f_dst, data, nbytes)                            
-                            tensor["offset"] = str(offset)
+                            dst_offset += size  
 
-                            tensor_manifest[device][key] = tensor 
-            
+                
+                f.write(TP_CACHE_MAGIC.encode('ascii'))                
+                f.write(plan_hash.digest())
+
+                f.truncate(total_size + TP_CACHE_FOOTER_SIZE)
+                        
             os.remove(list_path)         
-            os.remove(source_path)
-        
+            os.rename(source_path, dest_path)
+
+        manifest = {
+            "plan": plan_hash.hexdigest(),
+            "tensors": tensors
+        }        
         with open(self.manifest_path, "w") as f_manifest:
-            json.dump(tensor_manifest, f_manifest)
+            json.dump(manifest, f_manifest)
 
         # 2. Export modules
         with open(self.modules_path, "wb") as f_modules:
             pickle.dump(exported_modules, f_modules)        
 
     def init(self, device: int):
-        if self._mode != GpuCacheManagerMode.SERVING:
+        if self._mode != TPCacheManagerMode.SERVING:
             return
-
-        start_time = time.perf_counter()
 
         # 1. Load tensor manifest
         with open(self.manifest_path, "r") as f_manifest:
-            self._manifest = json.load(f_manifest)[str(device)]
+            self._manifest = json.load(f_manifest)
 
         # 2. Prepare dump descriptor
         path = self._get_tensor_dump_path(device)
@@ -188,12 +223,12 @@ class GpuCacheManager:
             dump = open(path, "rb")        
             dump_mm = mmap.mmap(dump.fileno(), length=0, access=mmap.ACCESS_READ)
             dump_mm_mv = memoryview(dump_mm)            
-            cpu_buffer = torch.empty(min(CPU_CACHE_LOAD_CHUNK_SIZE, dump_size), dtype=torch.uint8, pin_memory=True)
+            cpu_buffer = torch.empty(min(CACHE_LOAD_CHUNK_SIZE, dump_size), dtype=torch.uint8, pin_memory=True)
             cpu_buffer_mv = memoryview(cpu_buffer.numpy())
         
             offset = 0        
             while offset < dump_size:
-                chunk_size = min(CPU_CACHE_LOAD_CHUNK_SIZE, dump_size - offset)
+                chunk_size = min(CACHE_LOAD_CHUNK_SIZE, dump_size - offset)
                 start_time = time.perf_counter()
                 cpu_buffer_mv[:chunk_size] = dump_mm_mv[offset:(offset + chunk_size)]
                 gpu_buf[offset:(offset + chunk_size)].copy_(cpu_buffer[:chunk_size], non_blocking=True)
@@ -205,7 +240,7 @@ class GpuCacheManager:
             dump.close()
 
         self._tensors = {}
-        for key, tensor in self._manifest.items():
+        for key, tensor in self._manifest["tensors"][str(device)].items():
             dtype  = getattr(torch, tensor["dtype"].replace("torch.", ""))
             shape  = tuple(tensor["shape"])
             nbytes = int(tensor["nbytes"])
@@ -220,12 +255,8 @@ class GpuCacheManager:
                         
             self._tensors[key] = gpu_buf[start:end].view(dtype).view(shape)
 
-        elapsed = time.perf_counter() - start_time
-        gb_sec = (dump_size / (1024*1024*1024)) / elapsed
-        print(f"Device {device}: loading dump took {elapsed} seconds ({gb_sec} Gb/sec)")
-
     def get_module(self, key: str) -> object:
-        if self._mode != GpuCacheManagerMode.SERVING:
+        if self._mode != TPCacheManagerMode.SERVING:
             return None
 
         if self._modules == None:
@@ -235,7 +266,7 @@ class GpuCacheManager:
         return self._modules.get(key)
 
     def get_tensor(self, device: int, key: str, peek: bool = False) -> torch.Tensor:
-        if self._mode != GpuCacheManagerMode.SERVING:
+        if self._mode != TPCacheManagerMode.SERVING:
             return None
 
         if key is None or not key in self._tensors:
