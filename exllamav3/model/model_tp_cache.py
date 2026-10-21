@@ -4,6 +4,7 @@ from pathlib import Path
 from .model_tp_cuda import cuda_load_file_direct
 
 TP_CACHE_ENV_VAR                   = "EXL3_TP_CACHE_ENABLE"
+TP_CACHE_FORCE_ENV_VAR             = "EXL3_TP_CACHE_FORCE"
 TP_CACHE_BASE_PATH                 = ".tensorsplit"
 TP_CACHE_MAGIC                     = "TPC "
 TP_CACHE_FOOTER_SIZE               = 4 + 16 # magic + 16-byte md5 hash
@@ -21,7 +22,11 @@ class TPCacheManager:
 
     @staticmethod
     def enabled() -> bool:
-        return os.environ.get(TP_CACHE_ENV_VAR) == "1"    
+        return os.environ.get(TP_CACHE_ENV_VAR, "0") != "0"
+
+    @staticmethod
+    def _forced() -> bool:
+        return os.environ.get(TP_CACHE_FORCE_ENV_VAR, "0") != "0"
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
@@ -79,6 +84,10 @@ class TPCacheManager:
         # 2. Check if manifest and modules files exist:
         if not os.path.exists(self.manifest_path) or not os.path.exists(self.modules_path):
             return False
+
+        if self._forced():
+            print(f"{TP_CACHE_FORCE_ENV_VAR} is enabled, will skip cache validation.")
+            return True
 
         # 3. Validate plan hash
         plan_hash = hashlib.md5(json.dumps(plan).encode())
