@@ -231,6 +231,11 @@ jobs:
           # sccache already stores entries zstd-compressed (hence the Actions cache's own zstd gains
           # nothing on top); a mid level shrinks them further at a cost paid only on misses
           Write-Output "SCCACHE_CACHE_ZSTD_LEVEL=10" >> "$env:GITHUB_ENV"
+          # Server log, the Windows counterpart of the ccache log: the server starts with the build's
+          # first compile and inherits these, logging every compile with its hit or miss and the
+          # inputs hashed for it. Uploaded per job with the diagnostics below
+          Write-Output "SCCACHE_ERROR_LOG=$(Join-Path $env:RUNNER_TEMP 'sccache.log')" >> "$env:GITHUB_ENV"
+          Write-Output "SCCACHE_LOG=debug" >> "$env:GITHUB_ENV"
 
       - name: Stable site-packages path for the compiler cache
         run: |
@@ -593,6 +598,15 @@ jobs:
             $env:PYTORCH_NVCC = "sccache nvcc"
           } else {
             $env:PYTORCH_NVCC = "ccache ${{ steps.cuda-toolkit-Linux.outputs.CUDA_PATH }}/bin/nvcc"
+            # torch < 2.11 writes nvcc's --generate-dependencies-with-compile into the ninja rule for the
+            # depfile. ccache cannot run its preprocessor pass with that option, so every .cu compile ends
+            # in "preprocessing failed" and is never cached (zero hits against a warm cache). The depfile
+            # only serves incremental rebuilds, which a fresh checkout never does, so torch's own switch
+            # for leaving it out (it exists for exactly this, sccache) costs nothing here. torch 2.11
+            # and later use -MD -MF, which ccache takes; their command lines (and caches) stay as they are
+            if ([version]'${{ matrix.torch }}' -lt [version]'2.11.0') {
+              $env:TORCH_EXTENSION_SKIP_NVCC_GEN_DEPENDENCIES = "1"
+            }
           }
 
           # --- Build wheel
@@ -623,6 +637,10 @@ jobs:
           # verbatim, wrapper included
           $hipcc = Join-Path (python -m rocm_sdk path --bin) 'hipcc'
           $env:PYTORCH_NVCC = "ccache $hipcc"
+          # hipcc is installed by pip in this job, so its mtime (ccache's default compiler identity)
+          # differs every run and no entry from a previous run can ever match; hash the script's content
+          # instead (the SDK version is in the cache key already)
+          $env:CCACHE_COMPILERCHECK = "content"
           $env:MAX_JOBS = "4"
           $sampler = Start-Process -FilePath python -ArgumentList "$env:RUNNER_TEMP/memwatch.py", "$env:RUNNER_TEMP/memwatch.txt" -PassThru -NoNewWindow
 
@@ -647,12 +665,13 @@ jobs:
           }
 
       - name: Upload compiler cache diagnostics
-        if: runner.os == 'Linux' && (matrix.cuda != '' || matrix.rocm != '') && always()
+        if: (matrix.cuda != '' || matrix.rocm != '') && always()
         uses: actions/upload-artifact@v4
         with:
           name: ccache-debug-${{ runner.os }}-py${{ matrix.pyver }}-${{ matrix.cuda && format('cu{0}', matrix.cuda) || format('rocm{0}', matrix.rocm) }}-torch${{ matrix.torch }}
           path: |
             ${{ runner.temp }}/ccache.log
+            ${{ runner.temp }}/sccache.log
             build/**/*.ccache-input-text
           retention-days: 7
           if-no-files-found: warn
