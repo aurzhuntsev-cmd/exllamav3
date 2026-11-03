@@ -339,7 +339,7 @@ class SMConsumer:
                 if self.device >= 0:
                     self.tpcm.capture(self.device, imp["key"], cache_tensor)
                 return cache_tensor
-            if imp.get("gpu_cache_split"):
+            if imp.get("gpu_cache_split") and slice_dim is None:
                 return self.tpcm.get_tensor(self.device, imp["key"]) if self.device >= 0 else None
             cache_key = f"{imp['key']}_{first}_{last}" if slice_dim is not None else imp["key"]
             cached = self.tpcm.get_tensor(self.device, cache_key)
